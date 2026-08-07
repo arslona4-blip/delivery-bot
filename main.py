@@ -32,7 +32,7 @@ def run_health_check_server():
 threading.Thread(target=run_health_check_server, daemon=True).start()
 
 # Bot Sozlamalari
-TOKEN = "8825022746:AAHcx_6qCFAiKvjW04VQFNpAfGYYIQgd0Wc"  # Yangi tokeningiz
+TOKEN = "8825022746:AAHcx_6qCFAiKvjW04VQFNpAfGYYIQgd0Wc"
 ADMIN_ID = 1490138644
 
 bot = Bot(token=TOKEN)
@@ -85,7 +85,7 @@ async def start_order(message: types.Message, state: FSMContext):
     await message.answer("Menyudan mahsulotlarni tanlang:", reply_markup=products_keyboard())
 
 # Mahsulot qo'shish callback
-@dp.callback_query(OrderState.choosing_products, F.data.startswith("add_"))
+@dp.callback_query(F.data.startswith("add_"))
 async def add_to_cart(callback: CallbackQuery, state: FSMContext):
     prod_code = callback.data.split("_")[1]
     data = await state.get_data()
@@ -97,14 +97,14 @@ async def add_to_cart(callback: CallbackQuery, state: FSMContext):
     prod_name = PRODUCTS[prod_code]["name"]
     await callback.answer(f"{prod_name} savatchaga qo'shildi!")
 
-# Savatchani ko'rish
-@dp.callback_query(OrderState.choosing_products, F.data == "view_cart")
+# Savatchani ko'rish (holatdan qat'iy nazar ishlaydigan qilib tuzatildi)
+@dp.callback_query(F.data == "view_cart")
 async def view_cart(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     cart = data.get("cart", {})
 
     if not cart:
-        await callback.answer("Savatchangiz bo'sh!", show_alert=True)
+        await callback.answer("Savatchangiz bo'sh! Avval mahsulot tanlang.", show_alert=True)
         return
 
     text = "🛒 **Sizning savatchangiz:**\n\n"
@@ -157,7 +157,6 @@ async def process_location(message: types.Message, state: FSMContext):
         total_price += sum_price
         order_items += f"• {item['name']} x {qty} = {sum_price} so'm\n"
 
-    # Admin xabari
     admin_text = (
         f"📥 **Yangi buyurtma!**\n\n"
         f"👤 **Mijoz:** {message.from_user.full_name}\n"
