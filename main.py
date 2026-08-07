@@ -1,6 +1,8 @@
 import os
 import asyncio
 import logging
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
@@ -13,6 +15,21 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     CallbackQuery
 )
+
+# Render uchun oddiy Web Server (Port talabini qondirish uchun)
+class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is active!")
+
+def run_health_check_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(('0.0.0.0', port), SimpleHTTPRequestHandler)
+    server.serve_forever()
+
+# Serverni alohida oqimda (thread) ishga tushiramiz
+threading.Thread(target=run_health_check_server, daemon=True).start()
 
 # Bot Sozlamalari
 TOKEN = "8825022746:AAHcx_6qCFAiKvjW04VQFNpAfGYYIQgd0Wc"
@@ -167,7 +184,6 @@ async def info_handler(message: types.Message):
 
 async def main():
     logging.basicConfig(level=logging.INFO)
-    # Eski ishlayotgan sessiyalarni tozalash uchun drop_pending_updates=True qo'shildi
     await dp.start_polling(bot, drop_pending_updates=True)
 
 if __name__ == "__main__":
