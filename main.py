@@ -98,6 +98,7 @@ async def add_to_cart(callback: CallbackQuery, state: FSMContext):
     await state.set_state(OrderState.choosing_products)
 
     prod_name = PRODUCTS[prod_code]["name"]
+    # Tugma aylanib qolmasligi uchun darhol javob beramiz
     await callback.answer(f"{prod_name} savatchaga qo'shildi!")
 
 # Savatchani ko'rish
