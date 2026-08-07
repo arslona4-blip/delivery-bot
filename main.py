@@ -1,6 +1,4 @@
 import os
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
 import asyncio
 import logging
 from aiogram import Bot, Dispatcher, F, types
@@ -11,25 +9,10 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
     KeyboardButton,
     ReplyKeyboardMarkup,
-    ReplyKeyboardRemove,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     CallbackQuery
 )
-
-# Render Health Check Server
-class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot is active!")
-
-def run_health_check_server():
-    port = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(('0.0.0.0', port), SimpleHTTPRequestHandler)
-    server.serve_forever()
-
-threading.Thread(target=run_health_check_server, daemon=True).start()
 
 # Bot Sozlamalari
 TOKEN = "8825022746:AAHcx_6qCFAiKvjW04VQFNpAfGYYIQgd0Wc"
@@ -85,12 +68,11 @@ async def start_order(message: types.Message, state: FSMContext):
     await state.update_data(cart={})
     await message.answer("Menyudan mahsulotlarni tanlang:", reply_markup=products_keyboard())
 
-# Mahsulot qo'shish callback (har qanday holatda ham savatchaga yozadi)
+# Mahsulot qo'shish callback
 @dp.callback_query(F.data.startswith("add_"))
 async def add_to_cart(callback: CallbackQuery, state: FSMContext):
     prod_code = callback.data.split("_")[1]
     
-    # Agar holat o'rnatilmagan bo'lsa, avtomatik ochamiz
     data = await state.get_data()
     cart = data.get("cart", {})
 
@@ -185,7 +167,8 @@ async def info_handler(message: types.Message):
 
 async def main():
     logging.basicConfig(level=logging.INFO)
-    await dp.start_polling(bot)
+    # Eski ishlayotgan sessiyalarni tozalash uchun drop_pending_updates=True qo'shildi
+    await dp.start_polling(bot, drop_pending_updates=True)
 
 if __name__ == "__main__":
     asyncio.run(main())
