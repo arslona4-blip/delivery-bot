@@ -38,7 +38,7 @@ ADMIN_ID = 1490138644
 bot = Bot(token=TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-# Mahsulotlar bazasi (Namuna)
+# Mahsulotlar bazasi
 PRODUCTS = {
     "prod_1": {"name": "Lavash standart", "price": 30000},
     "prod_2": {"name": "Gamburger", "price": 25000},
@@ -71,7 +71,8 @@ def products_keyboard():
 
 # Start komandasi
 @dp.message(CommandStart())
-async def start_handler(message: types.Message):
+async def start_handler(message: types.Message, state: FSMContext):
+    await state.clear()
     await message.answer(
         f"Assalomu alaykum, {message.from_user.first_name}!\nYetkazib berish xizmatimiz botiga xush kelibsiz.",
         reply_markup=main_keyboard()
@@ -84,20 +85,23 @@ async def start_order(message: types.Message, state: FSMContext):
     await state.update_data(cart={})
     await message.answer("Menyudan mahsulotlarni tanlang:", reply_markup=products_keyboard())
 
-# Mahsulot qo'shish callback
+# Mahsulot qo'shish callback (har qanday holatda ham savatchaga yozadi)
 @dp.callback_query(F.data.startswith("add_"))
 async def add_to_cart(callback: CallbackQuery, state: FSMContext):
     prod_code = callback.data.split("_")[1]
+    
+    # Agar holat o'rnatilmagan bo'lsa, avtomatik ochamiz
     data = await state.get_data()
     cart = data.get("cart", {})
 
     cart[prod_code] = cart.get(prod_code, 0) + 1
     await state.update_data(cart=cart)
+    await state.set_state(OrderState.choosing_products)
 
     prod_name = PRODUCTS[prod_code]["name"]
     await callback.answer(f"{prod_name} savatchaga qo'shildi!")
 
-# Savatchani ko'rish (holatdan qat'iy nazar ishlaydigan qilib tuzatildi)
+# Savatchani ko'rish
 @dp.callback_query(F.data == "view_cart")
 async def view_cart(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
