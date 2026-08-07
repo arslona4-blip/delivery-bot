@@ -34,7 +34,7 @@ from aiogram.types import (
 )
 
 # API Token
-TOKEN = "8825022746:AAFv0Z4Jb5lzkPru78DgM5k0ME9fXyi5wBg"
+TOKEN = "8825022746:AAHcx_6qCFAiKvjW04VQFNpAfGYYIQgd0Wc"
 ADMIN_ID = 1490138644
 bot = Bot(token=TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
