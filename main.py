@@ -73,8 +73,12 @@ async def start_handler(message: types.Message, state: FSMContext):
 
 @dp.message(F.text == "🍔 Buyurtma berish")
 async def start_order(message: types.Message, state: FSMContext):
+    current_data = await state.get_data()
+    cart = current_data.get("cart", {})
+    
     await state.set_state(OrderState.choosing_products)
-    await state.update_data(cart={})
+    await state.update_data(cart=cart)
+    
     await message.answer("Menyudan mahsulotlarni tanlang:", reply_markup=products_keyboard())
 
 @dp.callback_query(F.data.startswith("add_"))
