@@ -16,7 +16,7 @@ from aiogram.types import (
     CallbackQuery
 )
 
-# Render uchun oddiy Web Server (Port talabini qondirish uchun)
+# Render uchun oddiy Web Server
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -28,7 +28,6 @@ def run_health_check_server():
     server = HTTPServer(('0.0.0.0', port), SimpleHTTPRequestHandler)
     server.serve_forever()
 
-# Serverni alohida oqimda (thread) ishga tushiramiz
 threading.Thread(target=run_health_check_server, daemon=True).start()
 
 # Bot Sozlamalari
@@ -97,13 +96,9 @@ async def add_to_cart(callback: CallbackQuery, state: FSMContext):
     await state.update_data(cart=cart)
     await state.set_state(OrderState.choosing_products)
 
-    prod_name = PRODUCTS[prod_code]["name"]
-    # Tugma aylanib qolmasligi uchun darhol javob beramiz
+    prod_name = PRODUCTS.get(prod_code, {}).get("name", "Mahsulot")
     await callback.answer(f"{prod_name} savatchaga qo'shildi!")
 
-# Savatchani ko'rish
-@dp.callback_query(F.data == "view_cart")
-async def view_cart(callback: CallbackQuery, state: FSMContext):
 # Savatchani ko'rish
 @dp.callback_query(F.data == "view_cart")
 async def view_cart(callback: CallbackQuery, state: FSMContext):
@@ -127,19 +122,6 @@ async def view_cart(callback: CallbackQuery, state: FSMContext):
     if total_price == 0:
         await callback.answer("Savatchangiz bo'sh!", show_alert=True)
         return
-
-    text += f"\n**Jami:** {total_price} so'm\n\nDavom etish uchun telefon raqamingizni yuboring:"
-    
-    phone_btn = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="📱 Telefon raqamni yuborish", request_contact=True)]],
-        resize_keyboard=True,
-        one_time_keyboard=True
-    )
-    
-    await state.set_state(OrderState.waiting_for_phone)
-    await callback.message.answer(text, parse_mode="Markdown", reply_markup=phone_btn)
-    await callback.answer()
-        text += f"• {item['name']} x {qty} = {sum_price} so'm\n"
 
     text += f"\n**Jami:** {total_price} so'm\n\nDavom etish uchun telefon raqamingizni yuboring:"
     
@@ -178,6 +160,8 @@ async def process_location(message: types.Message, state: FSMContext):
     order_items = ""
     total_price = 0
     for code, qty in cart.items():
+        if code not in PRODUCTS:
+            continue
         item = PRODUCTS[code]
         sum_price = item["price"] * qty
         total_price += sum_price
