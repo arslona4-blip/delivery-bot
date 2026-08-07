@@ -16,7 +16,6 @@ from aiogram.types import (
     CallbackQuery
 )
 
-# Render uchun oddiy Web Server
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -30,14 +29,12 @@ def run_health_check_server():
 
 threading.Thread(target=run_health_check_server, daemon=True).start()
 
-# Bot Sozlamalari
 TOKEN = "8825022746:AAHcx_6qCFAiKvjW04VQFNpAfGYYIQgd0Wc"
 ADMIN_ID = 1490138644
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-# Mahsulotlar bazasi
 PRODUCTS = {
     "prod_1": {"name": "Lavash standart", "price": 30000},
     "prod_2": {"name": "Gamburger", "price": 25000},
@@ -45,13 +42,11 @@ PRODUCTS = {
     "prod_4": {"name": "Moxito 0.5L", "price": 12000}
 }
 
-# FSM Holatlari
 class OrderState(StatesGroup):
     choosing_products = State()
     waiting_for_phone = State()
     waiting_for_location = State()
 
-# Klaviaturalar
 def main_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -68,7 +63,6 @@ def products_keyboard():
     builder.append([InlineKeyboardButton(text="🛒 Savatchani ko'rish / Rasmiylashtirish", callback_data="view_cart")])
     return InlineKeyboardMarkup(inline_keyboard=builder)
 
-# Start komandasi
 @dp.message(CommandStart())
 async def start_handler(message: types.Message, state: FSMContext):
     await state.clear()
@@ -77,34 +71,27 @@ async def start_handler(message: types.Message, state: FSMContext):
         reply_markup=main_keyboard()
     )
 
-# Buyurtma berish tugmasi
 @dp.message(F.text == "🍔 Buyurtma berish")
 async def start_order(message: types.Message, state: FSMContext):
     await state.set_state(OrderState.choosing_products)
     await state.update_data(cart={})
     await message.answer("Menyudan mahsulotlarni tanlang:", reply_markup=products_keyboard())
 
-# Mahsulot qo'shish callback
 @dp.callback_query(F.data.startswith("add_"))
 async def add_to_cart(callback: CallbackQuery, state: FSMContext):
     prod_code = callback.data.split("_")[1]
-    
     data = await state.get_data()
     cart = data.get("cart", {})
-
     cart[prod_code] = cart.get(prod_code, 0) + 1
     await state.update_data(cart=cart)
     await state.set_state(OrderState.choosing_products)
-
     prod_name = PRODUCTS.get(prod_code, {}).get("name", "Mahsulot")
     await callback.answer(f"{prod_name} savatchaga qo'shildi!")
 
-# Savatchani ko'rish
 @dp.callback_query(F.data == "view_cart")
 async def view_cart(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     cart = data.get("cart", {})
-
     if not cart:
         await callback.answer("Savatchangiz bo'sh! Avval mahsulot tanlang.", show_alert=True)
         return
@@ -124,23 +111,19 @@ async def view_cart(callback: CallbackQuery, state: FSMContext):
         return
 
     text += f"\n**Jami:** {total_price} so'm\n\nDavom etish uchun telefon raqamingizni yuboring:"
-    
     phone_btn = ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text="📱 Telefon raqamni yuborish", request_contact=True)]],
         resize_keyboard=True,
         one_time_keyboard=True
     )
-    
     await state.set_state(OrderState.waiting_for_phone)
     await callback.message.answer(text, parse_mode="Markdown", reply_markup=phone_btn)
     await callback.answer()
 
-# Telefon raqam qabul qilish
 @dp.message(OrderState.waiting_for_phone, F.contact)
 async def process_phone(message: types.Message, state: FSMContext):
     await state.update_data(phone=message.contact.phone_number)
     await state.set_state(OrderState.waiting_for_location)
-
     loc_btn = ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text="📍 Lokatsiyani yuborish", request_location=True)]],
         resize_keyboard=True,
@@ -148,7 +131,6 @@ async def process_phone(message: types.Message, state: FSMContext):
     )
     await message.answer("Rahmat! Endi yetkazib berish manzilini (lokatsiyangizni) yuboring:", reply_markup=loc_btn)
 
-# Lokatsiya va yakuniy buyurtma
 @dp.message(OrderState.waiting_for_location, F.location)
 async def process_location(message: types.Message, state: FSMContext):
     user_data = await state.get_data()
@@ -176,11 +158,9 @@ async def process_location(message: types.Message, state: FSMContext):
     )
     await bot.send_message(ADMIN_ID, admin_text, parse_mode="Markdown")
     await bot.send_location(ADMIN_ID, latitude=lat, longitude=lon)
-
     await message.answer("✅ Buyurtmangiz qabul qilindi! Tez orada operatorimiz bog'lanadi.", reply_markup=main_keyboard())
     await state.clear()
 
-# Aloqa va Ma'lumot
 @dp.message(F.text == "📞 Biz bilan aloqa")
 async def contact_handler(message: types.Message):
     await message.answer("Murojaat uchun:\n📞 Tel: +998 90 123 45 67\n💬 Telegram: @admin")
