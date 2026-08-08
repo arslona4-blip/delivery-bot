@@ -101,7 +101,28 @@ async def show_cart(message: Message, state: FSMContext):
     )
     await message.answer(text, reply_markup=phone_button)
     await state.set_state(OrderState.waiting_for_phone)
+@dp.message(F.contact, OrderState.waiting_for_phone)
+async def get_contact(message: Message, state: FSMContext):
+    phone = message.contact.phone_number
+    await state.update_data(phone=phone)
+    
+    location_keyboard = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="📍 Lokatsiyani yuborish", request_location=True)]],
+        resize_keyboard=True
+    )
+    await message.answer("Rahmat! Endi yetkazib berish manzilini aniqlash uchun quyidagi tugmani bosib **lokatsiyangizni yuboring**:", reply_markup=location_keyboard)
+    await state.set_state(OrderState.waiting_for_location)
 
+@dp.message(F.location, OrderState.waiting_for_location)
+async def get_location(message: Message, state: FSMContext):
+    lat = message.location.latitude
+    lon = message.location.longitude
+    data = await state.get_data()
+    phone = data.get("phone")
+    
+    # Bu yerda buyurtma yakunlanadi
+    await message.answer("Buyurtmangiz muvaffaqiyatli qabul qilindi! Tez orada yetkazib beramiz. Xaridingiz uchun rahmat! 😊", reply_markup=main_keyboard)
+    await state.clear()
 # Render port talabini qondirish uchun oddiy veb-server
 async def handle(request):
     return web.Response(text="Bot is running!")
