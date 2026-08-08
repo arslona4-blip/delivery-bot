@@ -63,11 +63,11 @@ def products_keyboard():
     builder.append([InlineKeyboardButton(text="🛒 Savatchani ko'rish / Rasmiylashtirish", callback_data="view_cart")])
     return InlineKeyboardMarkup(inline_keyboard=builder)
 
-@dp.message(CommandStart())
+@dp.message(Command("start"))
 async def start_handler(message: types.Message, state: FSMContext):
     await state.clear()
     await message.answer(
-        f"Assalomu alaykum, {message.from_user.first_name}!\nYetkazib berish xizmatimiz botiga xush kelibsiz.",
+        "Assalomu alaykum,Yetkazib berish xizmatimiz botiga xush kelibsiz.",
         reply_markup=main_keyboard()
     )
 
