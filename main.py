@@ -42,6 +42,7 @@ dp = Dispatcher(storage=MemoryStorage())
 
 # Buyurtma berish bosqichlari (FSM)
 class OrderState(StatesGroup):
+    choosing_products = State()
     waiting_for_phone = State()
     waiting_for_location = State()
 
@@ -73,21 +74,13 @@ async def start_handler(message: Message):
 
 @dp.message(F.text == "🛒 Buyurtma berish")
 async def start_order(message: Message, state: FSMContext):
-    phone_button = ReplyKeyboardMarkup(
-        keyboard=[
-            [
-                KeyboardButton(
-                    text="📞 Telefon raqamni yuborish", request_contact=True
-                )
-            ]
-        ],
-        resize_keyboard=True,
-    )
+    # Savatchani tozalab boshlaymiz
+    await state.update_data(cart={})
     await message.answer(
-        "Buyurtmani rasmiylashtirish uchun telefon raqamingizni yuboring:",
-        reply_markup=phone_button,
+        "Menudan mahsulotlarni tanlang:",
+        reply_markup=products_keyboard()
     )
-    await state.set_state(OrderState.waiting_for_phone)
+    await state.set_state(OrderState.choosing_products)
 
 
 @dp.message(OrderState.waiting_for_phone, F.contact)
