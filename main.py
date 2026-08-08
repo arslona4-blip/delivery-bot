@@ -63,7 +63,24 @@ async def start_order(message: Message, state: FSMContext):
 async def back_to_main(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("Asosiy menyu:", reply_markup=main_keyboard)
+@dp.message(F.text == "ℹ️ Ma'lumot")
+async def info_handler(message: Message):
+    text = (
+        "ℹ️ **Yetkazib berish xizmati haqida umumiy ma'lumot:**\n\n"
+        "🕒 **Ish vaqti:** Har kuni 09:00 dan 22:00 gacha.\n"
+        "🚀 **Yetkazib berish vaqti:** O'rtacha 30-45 daqiqa ichida.\n"
+        "💰 **To'lov turi:** Naqd pul yoki karta orqali."
+    )
+    await message.answer(text, parse_mode="Markdown")
 
+@dp.message(F.text == "📞 Biz bilan aloqa")
+async def contact_us_handler(message: Message):
+    text = (
+        "📞 **Biz bilan bog'lanish uchun ma'lumotlar:**\n\n"
+        "📱 **Telefon raqam:** +998 33 104 76 76\n"
+        "📍 **Manzil:** Toshkent viloyati, Bekobod tumani"
+    )
+    await message.answer(text, parse_mode="Markdown")
 @dp.message(OrderState.choosing_products, F.text.in_(PRODUCTS.keys()))
 async def add_product_to_cart(message: Message, state: FSMContext):
     product = PRODUCTS[message.text]
