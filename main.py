@@ -22,7 +22,8 @@ main_keyboard = ReplyKeyboardMarkup(
         [KeyboardButton(text="🛒 Buyurtma berish")],
         [KeyboardButton(text="ℹ️ Ma'lumot"), KeyboardButton(text="📞 Biz bilan aloqa")]
     ],
-    resize_keyboard=True
+    resize_keyboard=Trueawait
+    dp.start_polling(bot, drop_pending_updates=True)
 )
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
