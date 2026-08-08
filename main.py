@@ -84,15 +84,24 @@ async def start_order(message: types.Message, state: FSMContext):
     
     await message.answer("Menyudan mahsulotlarni tanlang:", reply_markup=products_keyboard())
 
-@dp.callback_query(F.data.startswith("add_"))
+@dp.callback_query(F.data.startswith("add:"))
 async def add_to_cart(callback: CallbackQuery, state: FSMContext):
-    prod_code = callback.data.split("_")[1]
+    # "add:lavash" ni ikkiga bo'lib, lavashni olamiz
+    prod_code = callback.data.split(":")[1]
+    
     data = await state.get_data()
     cart = data.get("cart", {})
+    
+    # Savatchaga qo'shamiz yoki sonini oshiramiz
     cart[prod_code] = cart.get(prod_code, 0) + 1
+    
     await state.update_data(cart=cart)
     await state.set_state(OrderState.choosing_products)
-    prod_name = PRODUCTS.get(prod_code, {}).get("name", "Mahsulot")
+    
+    # Tekshirib ko'rish uchun log chiqaramiz
+    print("Hozirgi savatcha:", cart)
+    
+    prod_name = PRODUCTS.get(prod_code, {}).get("name", prod_code)
     await callback.answer(f"{prod_name} savatchaga qo'shildi!")
 
 @dp.callback_query(F.data == "view_cart")
