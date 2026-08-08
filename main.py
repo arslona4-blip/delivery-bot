@@ -59,7 +59,6 @@ def main_keyboard():
 def products_keyboard():
     builder = []
     for code, item in PRODUCTS.items():
-        # Har bir mahsulot uchun callback_data="add_lavash" yoki "add_gamburger" bo'ladi
         builder.append([InlineKeyboardButton(text=f"{item['name']} - {item['price']} so'm", callback_data=f"add_{code}")])
     builder.append([InlineKeyboardButton(text="🛒 Savatchani ko'rish / Rasmiylashtirish", callback_data="view_cart")])
     return InlineKeyboardMarkup(inline_keyboard=builder)
@@ -87,7 +86,6 @@ async def start_order(message: types.Message, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("add_"))
 async def add_to_cart(callback: CallbackQuery, state: FSMContext):
-    # "add_lavash" dan "_" bo'yicha kesib olganda "lavash" chiqadi
     prod_code = callback.data.split("_")[1]
     
     data = await state.get_data()
@@ -124,17 +122,6 @@ async def view_cart(callback: CallbackQuery, state: FSMContext):
     
     await callback.message.answer(text)
     await callback.answer()
-@dp.message(OrderState.waiting_for_phone, F.contact)
-async def process_phone(message: types.Message, state: FSMContext):
-    await state.update_data(phone=message.contact.phone_number)
-    await state.set_state(OrderState.waiting_for_location)
-    loc_btn = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="📍 Lokatsiyani yuborish", request_location=True)]],
-        resize_keyboard=True,
-        one_time_keyboard=True
-    )
-    await message.answer("Rahmat! Endi yetkazib berish manzilini (lokatsiyangizni) yuboring:", reply_markup=loc_btn)
-
 @dp.message(OrderState.waiting_for_location, F.location)
 async def process_location(message: types.Message, state: FSMContext):
     user_data = await state.get_data()
