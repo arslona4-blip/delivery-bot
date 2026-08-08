@@ -24,7 +24,10 @@ main_keyboard = ReplyKeyboardMarkup(
 )
 
 PRODUCTS = {
-    "Cola 0.5L - 8000 so'm": {"code": "cola", "name": "Cola 0.5L", "price": 8000},
+    "Cola 0.5L - 8000 so'm": {"code": "cola", "name": "Cola 0.5L", "price": 7000},
+    "Cola 1L-12000 so'm":   {"code": "cola", "name": "Cola 1L", "price": 12000},
+    "Cola 1,5L-15000 so'm":   {"code": "cola", "name": "Cola 1L", "price": 15000},
+    "Cola 2L-20000 so'm":   {"code": "cola", "name": "Cola 2L", "price": 20000},
     "Fanta 0.5L - 8000 so'm": {"code": "fanta", "name": "Fanta 0.5L", "price": 8000},
     "Pepsi 0.5L - 8000 so'm": {"code": "pepsi", "name": "Pepsi 0.5L", "price": 8000},
     "Moxito 0.5L - 12000 so'm": {"code": "moxito", "name": "Moxito 0.5L", "price": 12000},
