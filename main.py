@@ -68,7 +68,7 @@ def products_keyboard():
             [KeyboardButton(text="Pishiriq - 15000 so'm"), KeyboardButton(text="Muzqaymoq - 6000 so'm")],
             [KeyboardButton(text="Olma (1 kg) - 10000 so'm"), KeyboardButton(text="Shaftoli (1 kg) - 18000 so'm")],
             [KeyboardButton(text="Shakar (1 kg) - 14000 so'm")],
-            [KeyboardButton(text="🛒 Savatchani ko'rish / Rasmiylashtirish")],
+            [KeyboardButton(text="🛒 Savatchani ko'rish / Rasmiylashtirish")]
             [KeyboardButton(text="🔙 Asosiy menyu")]
         ],
         resize_keyboard=True
