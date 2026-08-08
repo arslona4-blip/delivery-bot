@@ -145,12 +145,15 @@ async def show_cart(message: Message, state: FSMContext):
         
     text = "🛒 **Sizning savatchangiz:**\n\n"
     total = 0
+    
+    price_map = {p["code"]: p for p in PRODUCTS.values()}
+    
     for code, count in cart.items():
-        if code == "moxito":
-            name = "Moxito 0.5L"
-            price = 12000
-            total += price * count
-            text += f"• {name} x {count} = {price * count} so'm\n"
+        if code in price_map:
+            item = price_map[code]
+            cost = item["price"] * count
+            total += cost
+            text += f"• {item['name']} x {count} = {cost} so'm\n"
             
     text += f"\n**Jami:** {total} so'm"
     
