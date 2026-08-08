@@ -63,14 +63,17 @@ main_keyboard = ReplyKeyboardMarkup(
 def products_keyboard():
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="Moxito 0.5L - 12000 so'm")],
+            [KeyboardButton(text="Cola 0.5L - 8000 so'm"), KeyboardButton(text="Fanta 0.5L - 8000 so'm")],
+            [KeyboardButton(text="Pepsi 0.5L - 8000 so'm"), KeyboardButton(text="Moxito 0.5L - 12000 so'm")],
+            [KeyboardButton(text="Pishiriq - 15000 so'm"), KeyboardButton(text="Muzqaymoq - 6000 so'm")],
+            [KeyboardButton(text="Olma (1 kg) - 10000 so'm"), KeyboardButton(text="Shaftoli (1 kg) - 18000 so'm")],
+            [KeyboardButton(text="Shakar (1 kg) - 14000 so'm")],
             [KeyboardButton(text="🛒 Savatchani ko'rish / Rasmiylashtirish")],
-            [KeyboardButton(text="🔙 Asosiy menyu")]
+            [KeyboardButton(text="🔙 Asosiy menyu")
         ],
         resize_keyboard=True
     )
     return keyboard
-
 @dp.message(CommandStart())
 async def start_handler(message: Message, state: FSMContext):
     await state.clear()
@@ -88,7 +91,39 @@ async def start_order(message: Message, state: FSMContext):
         reply_markup=products_keyboard()
     )
     await state.set_state(OrderState.choosing_products)
+PRODUCTS = {
+    "Cola 0.5L - 8000 so'm": {"code": "cola", "name": "Cola 0.5L", "price": 8000},
+    "Fanta 0.5L - 8000 so'm": {"code": "fanta", "name": "Fanta 0.5L", "price": 8000},
+    "Pepsi 0.5L - 8000 so'm": {"code": "pepsi", "name": "Pepsi 0.5L", "price": 8000},
+    "Moxito 0.5L - 12000 so'm": {"code": "moxito", "name": "Moxito 0.5L", "price": 12000},
+    "Pishiriq - 15000 so'm": {"code": "pishiriq", "name": "Pishiriq", "price": 15000},
+    "Muzqaymoq - 6000 so'm": {"code": "muzqaymoq", "name": "Muzqaymoq", "price": 6000},
+    "Olma (1 kg) - 10000 so'm": {"code": "olma", "name": "Olma (1 kg)", "price": 10000},
+    "Shaftoli (1 kg) - 18000 so'm": {"code": "shaftoli", "name": "Shaftoli (1 kg)", "price": 18000},
+    "Shakar (1 kg) - 14000 so'm": {"code": "shakar", "name": "Shakar (1 kg)", "price": 14000},
+}
 
+
+# ─── SHU YERGA QO'SHASIZ ───
+
+
+@dp.message(OrderState.choosing_products, F.text.in_(PRODUCTS.keys()))
+async def add_product_to_cart(message: Message, state: FSMContext):
+    product = PRODUCTS[message.text]
+    data = await state.get_data()
+    cart = data.get("cart", {})
+    
+    code = product["code"]
+    cart[code] = cart.get(code, 0) + 1
+    await state.update_data(cart=cart)
+    
+    await message.answer(f"✅ {product['name']} savatchaga qo'shildi!")
+# ───────────────────────────
+
+
+@dp.message(OrderState.choosing_products, F.text == "🛒 Savatchani ko'rish / Rasmiylashtirish")
+async def show_cart(message: Message, state: FSMContext):
+    # savatchani ko'rsatish kodi davom etadi...
 @dp.message(OrderState.choosing_products, F.text.contains("Moxito"))
 async def add_moxito_to_cart(message: Message, state: FSMContext):
     data = await state.get_data()
