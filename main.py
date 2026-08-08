@@ -154,7 +154,6 @@ async def get_location(message: Message, state: FSMContext):
         reply_markup=main_keyboard
     )
     await state.set_state(None)
-
 async def web_server():
     app = web.Application()
     app.router.add_get("/", handle)
