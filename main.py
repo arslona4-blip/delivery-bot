@@ -61,7 +61,18 @@ main_keyboard = ReplyKeyboardMarkup(
     ],
     resize_keyboard=True,
 )
-
+# Mahsulotlar menyusi (Inline yoki Reply tugmalar yordamida)
+def products_keyboard():
+    # Bu yerda mahsulotlar ro'yxatini chiqaramiz
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="Moxito 0.5L - 12000 so'm")],
+            [KeyboardButton(text="🛒 Savatchani ko'rish / Rasmiylashtirish")],
+            [KeyboardButton(text="🔙 Asosiy menyu")]
+        ],
+        resize_keyboard=True
+    )
+    return keyboard
 
 @dp.message(CommandStart())
 async def start_handler(message: Message):
