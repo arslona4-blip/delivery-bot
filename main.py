@@ -63,12 +63,15 @@ def products_keyboard():
     builder.append([InlineKeyboardButton(text="🛒 Savatchani ko'rish / Rasmiylashtirish", callback_data="view_cart")])
     return InlineKeyboardMarkup(inline_keyboard=builder)
 
+from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+
 @dp.message(Command("start"))
-async def start_handler(message: types.Message, state: FSMContext):
+async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
     await message.answer(
-        "Assalomu alaykum,Yetkazib berish xizmatimiz botiga xush kelibsiz.",
-        reply_markup=main_keyboard()
+        "Assalomu alaykum! Yetkazib berish xizmati botiga xush kelibsiz.",
+        reply_markup=main_keyboard()  # Asosiy menyu tugmalari
     )
 
 @dp.message(F.text == "🍔 Buyurtma berish")
