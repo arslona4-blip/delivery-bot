@@ -81,7 +81,23 @@ async def start_handler(message: Message):
         f"Yetkazib berish xizmatimiz botiga xush kelibsiz.",
         reply_markup=main_keyboard,
     )
+@dp.message(CommandStart())
+async def start_handler(message: Message):
+    await message.answer(
+        f"Assalomu alaykum, {message.from_user.first_name}!\n"
+        f"Yetkazib berish xizmatimiz botiga xush kelibsiz.",
+        reply_markup=main_keyboard,
+    )
 
+# ─── START_ORDER FUNKSIYASI SHU YERDA TURISHI KERAK ───
+@dp.message(F.text == "🛒 Buyurtma berish")
+async def start_order(message: Message, state: FSMContext):
+    await state.update_data(cart={})
+    await message.answer(
+        "Menudan mahsulotlarni tanlang:",
+        reply_markup=products_keyboard()
+    )
+    await state.set_state(OrderState.choosing_products)
 
 @dp.message(F.text == "🛒 Buyurtma berish")
 async def start_order(message: Message, state: FSMContext):
