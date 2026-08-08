@@ -84,23 +84,6 @@ async def start_order(message: types.Message, state: FSMContext):
     
     await message.answer("Menyudan mahsulotlarni tanlang:", reply_markup=products_keyboard())
 
-@dp.callback_query(F.data.startswith("add_"))
-async def add_to_cart(callback: CallbackQuery, state: FSMContext):
-    # "add_lavash" dan "_" bo'yicha kesib olamiz
-    prod_code = callback.data.split("_")[1]
-    
-    data = await state.get_data()
-    cart = data.get("cart", {})
-    
-    # Savatchaga qo'shamiz yoki sonini oshiramiz
-    cart[prod_code] = cart.get(prod_code, 0) + 1
-    
-    await state.update_data(cart=cart)
-    await state.set_state(OrderState.choosing_products)
-    
-    prod_name = PRODUCTS.get(prod_code, {}).get("name", "Mahsulot")
-    await callback.answer(f"{prod_name} savatchaga qo'shildi!")
-
 @dp.callback_query(F.data == "view_cart")
 async def view_cart(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
@@ -114,9 +97,9 @@ async def view_cart(callback: CallbackQuery, state: FSMContext):
     total_price = 0
     
     for code, count in cart.items():
-        # PRODUCTS lug'atidan mahsulotni topamiz
+        # PRODUCTS lug'atidan mahsulot ma'lumotlarini to'g'ri olamiz
         item = PRODUCTS.get(code, {})
-        name = item.get("name", code) # Agar topilmasa kodning o'zini chiqaradi
+        name = item.get("name", code)
         price = item.get("price", 0)
         
         total_price += price * count
