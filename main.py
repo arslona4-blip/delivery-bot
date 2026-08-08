@@ -60,7 +60,21 @@ async def make_order(message: Message, state: FSMContext):
     )
     await message.answer("Telefon raqamingizni yuboring:", reply_markup=phone_keyboard)
     await state.set_state(OrderState.waiting_for_phone)
+# ... (oldingi buyurtma berish kodi tugagan joy)
 
+# Telefon raqamni qabul qilib oluvchi funksiya
+@dp.message(OrderState.waiting_for_phone, F.contact)
+async def get_phone(message: Message, state: FSMContext):
+    phone_number = message.contact.phone_number
+    await state.update_data(phone=phone_number)
+    
+    await message.answer(
+        "Rahmat! Endi mahsulotlarimiz bilan tanishing:", 
+        reply_markup=main_keyboard
+    )
+    await state.clear()
+
+# ... (pastda web_server va main funksiyalar davom etaveradi)
 # ... (qolgan telefon va lokatsiya funksiyalari o'z o'rnida qoladi) ...
 
 async def web_server():
