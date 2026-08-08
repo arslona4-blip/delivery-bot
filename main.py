@@ -22,7 +22,29 @@ main_keyboard = ReplyKeyboardMarkup(
     ],
     resize_keyboard=True,
 )
-
+@dp.message(F.text == "📦 Mening buyurtmalarim")
+async def my_orders_handler(message: Message, state: FSMContext):
+    data = await state.get_data()
+    cart = data.get("cart", {})
+    phone = data.get("phone", "Kiritilmagan")
+    
+    if not cart:
+        await message.answer("Sizda hozircha faol buyurtmalar yo'q. 🛒 Buyurtma berish tugmasini bosib xarid qilishingiz mumkin!")
+        return
+        
+    text = "📦 **Sizning oxirgi buyurtmangiz:**\n\n"
+    total = 0
+    
+    # Mahsulot narxlarini hisoblash uchun price_map tuzamiz
+    price_map = {p["code"]: p for p in PRODUCTS.values()}
+    # Agar PRODUCTS tuzilishi boshqacha bo'lsa, to'g'ridan-to'g'ri nomlar bo'yicha ham olish mumkin
+    
+    for code, count in cart.items():
+        # Bu yerda savatchadagi mahsulotlarni chiqaramiz
+        text += f"• {code} x {count}\n"
+        
+    text += f"\n📞 **Telefon raqamingiz:** {phone}"
+    await message.answer(text, parse_mode="Markdown")
 PRODUCTS = {
     "Cola 0.5L - 8000 so'm": {"code": "cola", "name": "Cola 0.5L", "price": 7000},
     "Cola 1L-12000 so'm":   {"code": "cola", "name": "Cola 1L", "price": 12000},
