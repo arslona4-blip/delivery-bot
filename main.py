@@ -150,8 +150,10 @@ async def get_location(message: Message, state: FSMContext):
     phone = data.get("phone")
     
     # Bu yerda buyurtma yakunlanadi
+  
+    await state.update_data(last_order=cart, cart={})
     await message.answer("Buyurtmangiz muvaffaqiyatli qabul qilindi! Tez orada yetkazib beramiz. Xaridingiz uchun rahmat! 😊", reply_markup=main_keyboard)
-    await state.clear()
+    await state.set_state(None)
 # Render port talabini qondirish uchun oddiy veb-server
 async def handle(request):
     return web.Response(text="Bot is running!")
