@@ -5,7 +5,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 
-TOKEN = os.getenv("BOT_TOKEN", "SIZNING_TOKENINGIZ")
+TOKEN = os.getenv("BOT_TOKEN", "8825022746:AAHcx_6qCFAiKvjW04VQFNpAfGYYIQgd0Wc")
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
