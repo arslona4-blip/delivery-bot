@@ -7,7 +7,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiohttp import web
 
 # Token va botni sozlash
-TOKEN = os.getenv("BOT_TOKEN", "SIZNING_BOT_TOKENINGIZ")
+TOKEN ="8825022746:AAGO5dOX9EX0rtOOMLwi6SdbJ_EBDJxAWEI:
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
