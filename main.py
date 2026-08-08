@@ -84,10 +84,10 @@ async def start_order(message: types.Message, state: FSMContext):
     
     await message.answer("Menyudan mahsulotlarni tanlang:", reply_markup=products_keyboard())
 
-@dp.callback_query(F.data.startswith("add:"))
+@dp.callback_query(F.data.startswith("add_"))
 async def add_to_cart(callback: CallbackQuery, state: FSMContext):
-    # "add:lavash" ni ikkiga bo'lib, lavashni olamiz
-    prod_code = callback.data.split(":")[1]
+    # "add_lavash" dan "_" bo'yicha kesib olamiz
+    prod_code = callback.data.split("_")[1]
     
     data = await state.get_data()
     cart = data.get("cart", {})
@@ -98,44 +98,31 @@ async def add_to_cart(callback: CallbackQuery, state: FSMContext):
     await state.update_data(cart=cart)
     await state.set_state(OrderState.choosing_products)
     
-    # Tekshirib ko'rish uchun log chiqaramiz
-    print("Hozirgi savatcha:", cart)
-    
-    prod_name = PRODUCTS.get(prod_code, {}).get("name", prod_code)
+    prod_name = PRODUCTS.get(prod_code, {}).get("name", "Mahsulot")
     await callback.answer(f"{prod_name} savatchaga qo'shildi!")
 
 @dp.callback_query(F.data == "view_cart")
 async def view_cart(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     cart = data.get("cart", {})
+    
     if not cart:
         await callback.answer("Savatchangiz bo'sh! Avval mahsulot tanlang.", show_alert=True)
         return
-
+    
+    # Savatchadagi mahsulotlarni chiqarish qismi
     text = "🛒 **Sizning savatchangiz:**\n\n"
     total_price = 0
-    for code, qty in cart.items():
-        if code not in PRODUCTS:
-            continue
-        item = PRODUCTS[code]
-        sum_price = item["price"] * qty
-        total_price += sum_price
-        text += f"• {item['name']} x {qty} = {sum_price} so'm\n"
-
-    if total_price == 0:
-        await callback.answer("Savatchangiz bo'sh!", show_alert=True)
-        return
-
-    text += f"\n**Jami:** {total_price} so'm\n\nDavom etish uchun telefon raqamingizni yuboring:"
-    phone_btn = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="📱 Telefon raqamni yuborish", request_contact=True)]],
-        resize_keyboard=True,
-        one_time_keyboard=True
-    )
-    await state.set_state(OrderState.waiting_for_phone)
-    await callback.message.answer(text, parse_mode="Markdown", reply_markup=phone_btn)
+    for code, count in cart.items():
+        item = PRODUCTS.get(code, {})
+        name = item.get("name", code)
+        price = item.get("price", 0)
+        total_price += price * count
+        text += f"• {name} x {count} = {price * count} so'm\n"
+    
+    text += f"\n**Jami:** {total_price} so'm"
+    await callback.message.answer(text)
     await callback.answer()
-
 @dp.message(OrderState.waiting_for_phone, F.contact)
 async def process_phone(message: types.Message, state: FSMContext):
     await state.update_data(phone=message.contact.phone_number)
