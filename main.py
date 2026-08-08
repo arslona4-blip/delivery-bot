@@ -74,20 +74,7 @@ def products_keyboard():
     )
     return keyboard
 
-@dp.message(CommandStart())
-async def start_handler(message: Message):
-    await message.answer(
-        f"Assalomu alaykum, {message.from_user.first_name}!\n"
-        f"Yetkazib berish xizmatimiz botiga xush kelibsiz.",
-        reply_markup=main_keyboard,
-    )
-@dp.message(CommandStart())
-async def start_handler(message: Message):
-    await message.answer(
-        f"Assalomu alaykum, {message.from_user.first_name}!\n"
-        f"Yetkazib berish xizmatimiz botiga xush kelibsiz.",
-        reply_markup=main_keyboard,
-    )
+
 
 # ─── START_ORDER FUNKSIYASI SHU YERDA TURISHI KERAK ───
 @dp.message(F.text == "🛒 Buyurtma berish")
