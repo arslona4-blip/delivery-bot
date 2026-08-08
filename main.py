@@ -45,6 +45,23 @@ async def my_orders_handler(message: Message, state: FSMContext):
         
     text += f"\n📞 **Telefon raqamingiz:** {phone}"
     await message.answer(text, parse_mode="Markdown")
+    @dp.message(F.text == "📦 Mening buyurtmalarim")
+async def my_orders_handler(message: Message, state: FSMContext):
+    data = await state.get_data()
+    cart = data.get("last_order", {})  # Oldingi buyurtmani o'qib olamiz
+    phone = data.get("phone", "Kiritilmagan")
+    
+    if not cart:
+        await message.answer("Sizda hozircha faol buyurtmalar yo'q. 🛒 Buyurtma berish tugmasini bosib xarid qilishingiz mumkin!")
+        return
+
+    text = "📦 **Sizning oxirgi buyurtmangiz:**\n\n"
+    
+    for code, count in cart.items():
+        text += f"• {code} x {count}\n"
+        
+    text += f"\n📞 **Telefon raqamingiz:** {phone}"
+    await message.answer(text, parse_mode="Markdown")
 PRODUCTS = {
     "Cola 0.5L - 8000 so'm": {"code": "cola", "name": "Cola 0.5L", "price": 7000},
     "Cola 1L-12000 so'm":   {"code": "cola", "name": "Cola 1L", "price": 12000},
