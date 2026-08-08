@@ -154,7 +154,9 @@ async def get_location(message: Message, state: FSMContext):
         reply_markup=main_keyboard
     )
     await state.set_state(None)
-  async def web_server():
+
+async def web_server():
+    app = web.Application()
     app.router.add_get("/", handle)
     runner = web.AppRunner(app)
     await runner.setup()
@@ -163,6 +165,7 @@ async def get_location(message: Message, state: FSMContext):
     await site.start()
 
 async def main():
+   
     print("Bot ishga tushdi...")
     await web_server()
     await dp.start_polling(bot)
