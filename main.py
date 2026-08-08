@@ -122,17 +122,17 @@ async def add_product_to_cart(message: Message, state: FSMContext):
 
 
 @dp.message(OrderState.choosing_products, F.text == "🛒 Savatchani ko'rish / Rasmiylashtirish")
-async def show_cart(message: Message, state: FSMContext):
+
     # savatchani ko'rsatish kodi davom etadi...
 @dp.message(OrderState.choosing_products, F.text.contains("Moxito"))
-async def add_moxito_to_cart(message: Message, state: FSMContext):
-    data = await state.get_data()
-    cart = data.get("cart", {})
+
+      data = await state.get_data()
+      cart = data.get("cart", {})
     
-    cart["moxito"] = cart.get("moxito", 0) + 1
-    await state.update_data(cart=cart)
+      cart["moxito"] = cart.get("moxito", 0) + 1
+      await state.update_data(cart=cart)
     
-    await message.answer("Moxito 0.5L savatchaga qo'shildi! Yana mahsulot tanlashingiz mumkin yoki savatchani ko'ring.")
+      await message.answer("Moxito 0.5L savatchaga qo'shildi! Yana mahsulot tanlashingiz mumkin yoki savatchani ko'ring.")
 
 @dp.message(OrderState.choosing_products, F.text == "🛒 Savatchani ko'rish / Rasmiylashtirish")
 async def show_cart(message: Message, state: FSMContext):
