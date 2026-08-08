@@ -39,18 +39,14 @@ PRODUCTS = {
 }
 
 def products_keyboard():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="Cola 0.5L - 8000 so'm"), KeyboardButton(text="Fanta 0.5L - 8000 so'm")],
-            [KeyboardButton(text="Pepsi 0.5L - 8000 so'm"), KeyboardButton(text="Moxito 0.5L - 12000 so'm")],
-            [KeyboardButton(text="Pishiriq - 15000 so'm"), KeyboardButton(text="Muzqaymoq - 6000 so'm")],
-            [KeyboardButton(text="Olma (1 kg) - 10000 so'm"), KeyboardButton(text="Shaftoli (1 kg) - 18000 so'm")],
-            [KeyboardButton(text="Shakar (1 kg) - 14000 so'm")],
-            [KeyboardButton(text="🛒 Savatchani ko'rish / Rasmiylashtirish")],
-            [KeyboardButton(text="🔙 Asosiy menyu")]
-        ],
-        resize_keyboard=True
-    )
+    # PRODUCTS dagi nomlarni olib bittadan tugma yasaydi
+    buttons = [[KeyboardButton(text=name)] for name in PRODUCTS.keys()]
+    
+    # Oxiriga boshqaruv tugmalarini qo'shamiz
+    buttons.append([KeyboardButton(text="🛒 Savatchani ko'rish / Rasmiylashtirish")])
+    buttons.append([KeyboardButton(text="🔙 Asosiy menyu")])
+    
+    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
 @dp.message(CommandStart())
 async def start_handler(message: Message, state: FSMContext):
