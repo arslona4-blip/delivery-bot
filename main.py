@@ -1,11 +1,12 @@
 import os
+from aiohttp import web
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 
-TOKEN = os.getenv("BOT_TOKEN", "8825022746:AAHcx_6qCFAiKvjW04VQFNpAfGYYIQgd0Wc")
+TOKEN = os.getenv("BOT_TOKEN", "8825022746:AAGPlqN2ktO9B2bAXb5ronCmpulFPlciSKIZ")
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
@@ -99,8 +100,22 @@ async def show_cart(message: Message, state: FSMContext):
     await message.answer(text, reply_markup=phone_button)
     await state.set_state(OrderState.waiting_for_phone)
 
+# Render port talabini qondirish uchun oddiy veb-server
+async def handle(request):
+    return web.Response(text="Bot is running!")
+
+async def web_server():
+    app = web.Application()
+    app.router.add_get("/", handle)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.getenv("PORT", 10000))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+
 async def main():
     print("Bot ishga tushdi...")
+    await web_server()
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
