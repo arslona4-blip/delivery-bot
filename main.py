@@ -18,11 +18,16 @@ class OrderState(StatesGroup):
     waiting_for_location = State()
 
 # Asosiy menyu tugmasi
+
+)
 main_keyboard = ReplyKeyboardMarkup(
-    keyboard=[[KeyboardButton(text="🛒 Buyurtma berish")]],
+    keyboard=[
+        [KeyboardButton(text="🛍 Mahsulotlar"), KeyboardButton(text="📦 Mening buyurtmalarim")],
+        [KeyboardButton(text="🛒 Buyurtma berish")],
+        [KeyboardButton(text="ℹ️ Ma'lumot"), KeyboardButton(text="📞 Biz bilan aloqa")]
+    ],
     resize_keyboard=True
 )
-
 # Veb-server uchun handle funksiyasi (Render o'chib qolmasligi uchun)
 async def handle(request):
     return web.Response(text="Bot is running!")
