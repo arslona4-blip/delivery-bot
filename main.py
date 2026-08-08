@@ -24,7 +24,13 @@ main_keyboard = ReplyKeyboardMarkup(
 # Veb-server uchun handle funksiyasi (Render o'chib qolmasligi uchun)
 async def handle(request):
     return web.Response(text="Bot is running!")
-
+@dp.message(F.text == "/start")
+async def cmd_start(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer(
+        "Assalomu alaykum! Xush kelibsiz. Buyurtma berish uchun quyidagi tugmani bosing:", 
+        reply_markup=main_keyboard
+    )
 # Lokatsiyani qabul qiluvchi funksiya
 @dp.message(F.location, OrderState.waiting_for_location)
 async def get_location(message: Message, state: FSMContext):
