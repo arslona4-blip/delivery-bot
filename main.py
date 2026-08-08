@@ -62,7 +62,7 @@ main_keyboard = ReplyKeyboardMarkup(
 # Mahsulotlar menyusi
 def products_keyboard():
     keyboard = ReplyKeyboardMarkup(
-        keyboard=[
+        keyboard=)
             [KeyboardButton(text="Cola 0.5L - 8000 so'm"), KeyboardButton(text="Fanta 0.5L - 8000 so'm")],
             [KeyboardButton(text="Pepsi 0.5L - 8000 so'm"), KeyboardButton(text="Moxito 0.5L - 12000 so'm")],
             [KeyboardButton(text="Pishiriq - 15000 so'm"), KeyboardButton(text="Muzqaymoq - 6000 so'm")],
