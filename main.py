@@ -2,6 +2,7 @@ import os
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
+# --- Render health check server ---
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -15,11 +16,8 @@ def run_health_check_server():
 
 threading.Thread(target=run_health_check_server, daemon=True).start()
 
+# --- Telegram Bot ---
 import asyncio
-import logging
-from aiogram import Bot, Dispatcher, F, types
-
-
 import logging
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import CommandStart
@@ -31,21 +29,20 @@ from aiogram.types import (
     Message,
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
+    CallbackQuery
 )
 
-# API Token
 TOKEN = "8825022746:AAHcx_6qCFAiKvjW04VQFNpAfGYYIQgd0Wc"
 ADMIN_ID = 1490138644
+
 bot = Bot(token=TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-
-# Buyurtma berish bosqichlari (FSM)
+# FSM states
 class OrderState(StatesGroup):
     choosing_products = State()
     waiting_for_phone = State()
     waiting_for_location = State()
-
 
 # Asosiy menyu
 main_keyboard = ReplyKeyboardMarkup(
@@ -61,9 +58,9 @@ main_keyboard = ReplyKeyboardMarkup(
     ],
     resize_keyboard=True,
 )
-# Mahsulotlar menyusi (Inline yoki Reply tugmalar yordamida)
+
+# Mahsulotlar menyusi
 def products_keyboard():
-    # Bu yerda mahsulotlar ro'yxatini chiqaramiz
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="Moxito 0.5L - 12000 so'm")],
@@ -74,9 +71,15 @@ def products_keyboard():
     )
     return keyboard
 
+@dp.message(CommandStart())
+async def start_handler(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer(
+        f"Assalomu alaykum, {message.from_user.first_name}!\n"
+        f"Yetkazib berish xizmatimiz botiga xush kelibsiz.",
+        reply_markup=main_keyboard,
+    )
 
-
-# ─── START_ORDER FUNKSIYASI SHU YERDA TURISHI KERAK ───
 @dp.message(F.text == "🛒 Buyurtma berish")
 async def start_order(message: Message, state: FSMContext):
     await state.update_data(cart={})
@@ -86,93 +89,82 @@ async def start_order(message: Message, state: FSMContext):
     )
     await state.set_state(OrderState.choosing_products)
 
-@dp.message(F.text == "🛒 Buyurtma berish")
-async def start_order(message: Message, state: FSMContext):
-    # Savatchani tozalab boshlaymiz
-    await state.update_data(cart={})
-    await message.answer(
-        "Menudan mahsulotlarni tanlang:",
-        reply_markup=products_keyboard()
-    )
-    await state.set_state(OrderState.choosing_products)
+@dp.message(OrderState.choosing_products, F.text.contains("Moxito"))
+async def add_moxito_to_cart(message: Message, state: FSMContext):
+    data = await state.get_data()
+    cart = data.get("cart", {})
+    
+    cart["moxito"] = cart.get("moxito", 0) + 1
+    await state.update_data(cart=cart)
+    
+    await message.answer("Moxito 0.5L savatchaga qo'shildi! Yana mahsulot tanlashingiz mumkin yoki savatchani ko'ring.")
 
+@dp.message(OrderState.choosing_products, F.text == "🛒 Savatchani ko'rish / Rasmiylashtirish")
+async def show_cart(message: Message, state: FSMContext):
+    data = await state.get_data()
+    cart = data.get("cart", {})
+    
+    if not cart:
+        await message.answer("Savatchangiz bo'sh!")
+        return
+        
+    text = "🛒 **Sizning savatchangiz:**\n\n"
+    total = 0
+    for code, count in cart.items():
+        if code == "moxito":
+            name = "Moxito 0.5L"
+            price = 12000
+            total += price * count
+            text += f"• {name} x {count} = {price * count} so'm\n"
+            
+    text += f"\n**Jami:** {total} so'm"
+    
+    phone_button = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📞 Telefon raqamni yuborish", request_contact=True)]
+        ],
+        resize_keyboard=True
+    )
+    await message.answer(text, reply_markup=phone_button)
+    await state.set_state(OrderState.waiting_for_phone)
 
 @dp.message(OrderState.waiting_for_phone, F.contact)
 async def process_phone(message: Message, state: FSMContext):
-    await state.update_data(phone=message.contact.phone_number)
-
+    phone = message.contact.phone_number
+    await state.update_data(phone=phone)
+    
     location_button = ReplyKeyboardMarkup(
         keyboard=[
-            [
-                KeyboardButton(
-                    text="📍 Joylashuvni (GPS) yuborish",
-                    request_location=True,
-                )
-            ]
+            [KeyboardButton(text="📍 Joylashuvni (GPS) yuborish", request_location=True)]
         ],
-        resize_keyboard=True,
+        resize_keyboard=True
     )
-    await message.answer(
-        "Rahmat! Endi yetkazib berish manzilini (lokatsiyangizni) yuboring:",
-        reply_markup=location_button,
-    )
+    await message.answer("Rahmat! Endi yetkazib berish manzilini (lokatsiyangizni) yuboring:", reply_markup=location_button)
     await state.set_state(OrderState.waiting_for_location)
-
 
 @dp.message(OrderState.waiting_for_location, F.location)
 async def process_location(message: Message, state: FSMContext):
-    user_data = await state.get_data()
-    phone = user_data.get("phone")
     lat = message.location.latitude
     lon = message.location.longitude
-
+    data = await state.get_data()
+    phone = data.get("phone")
+    
     await message.answer(
         f"✅ Buyurtmangiz qabul qilindi!\n\n"
         f"📞 Telefon: {phone}\n"
         f"📍 Koordinatalar: {lat}, {lon}\n\n"
         f"Tez orada operatorimiz siz bilan bog'lanadi.",
-        reply_markup=main_keyboard,
+        reply_markup=main_keyboard
     )
     await state.clear()
 
-
-@dp.message(F.text == "📞 Biz bilan aloqa")
-async def contact_handler(message: Message):
-    await message.answer(
-        "Murojaat uchun:\n📞 Tel: +998 90 123 45 67\n💬 Telegram: @admin"
-    )
-
+@dp.message(F.text == "🔙 Asosiy menyu")
+async def back_to_main(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("Asosiy menyu:", reply_markup=main_keyboard)
 
 async def main():
-    logging.basicConfig(level=logging.INFO)
-    print("Bot muvaffaqiyatli ishga tushdi...")
     await dp.start_polling(bot)
-
-
-# Lokatsiya qabul qilinganda Adminga buyurtma yuborish
-@dp.message(OrderState.waiting_for_location, F.location)
-async def handle_location(message: Message, state: FSMContext):
-    lat = message.location.latitude
-    lon = message.location.longitude
-    
-    user_data = await state.get_data()
-    phone = user_data.get("phone", "Ko'rsatilmadi")
-    
-    # Mijozga tasdiq xabari
-    await message.answer("✅ Buyurtmangiz qabul qilindi!", reply_markup=main_keyboard)
-    
-    # Adminga buyurtma yuborish
-    admin_text = (
-        f"📥 **YANGI BUYURTMA!**\n\n"
-        f"👤 **Mijoz:** {message.from_user.full_name}\n"
-        f"📞 **Tel:** {phone}\n"
-        f"📍 **Lokatsiya:** https://maps.google.com/?q={lat},{lon}"
-    )
-    
-    await bot.send_message(chat_id=ADMIN_ID, text=admin_text, parse_mode="Markdown")
-    await bot.send_location(chat_id=ADMIN_ID, latitude=lat, longitude=lon)
-    
-    await state.clear()
 
 if __name__ == "__main__":
     asyncio.run(main())
