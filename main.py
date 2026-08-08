@@ -110,17 +110,20 @@ async def view_cart(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Savatchangiz bo'sh! Avval mahsulot tanlang.", show_alert=True)
         return
     
-    # Savatchadagi mahsulotlarni chiqarish qismi
     text = "🛒 **Sizning savatchangiz:**\n\n"
     total_price = 0
+    
     for code, count in cart.items():
+        # PRODUCTS lug'atidan mahsulotni topamiz
         item = PRODUCTS.get(code, {})
-        name = item.get("name", code)
+        name = item.get("name", code) # Agar topilmasa kodning o'zini chiqaradi
         price = item.get("price", 0)
+        
         total_price += price * count
         text += f"• {name} x {count} = {price * count} so'm\n"
     
     text += f"\n**Jami:** {total_price} so'm"
+    
     await callback.message.answer(text)
     await callback.answer()
 @dp.message(OrderState.waiting_for_phone, F.contact)
