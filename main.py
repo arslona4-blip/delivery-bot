@@ -24,10 +24,46 @@ main_keyboard = ReplyKeyboardMarkup(
     ],
     resize_keyboard=True
 )
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
+# Mahsulotlar ro'yxati va ularni tanlash tugmalari
+@dp.message(OrderState.waiting_for_phone, F.contact)
+async def get_phone(message: Message, state: FSMContext):
+    phone_number = message.contact.phone_number
+    await state.update_data(phone=phone_number)
+    
+    # Mahsulotlarni tanlash uchun inline tugmalar yaratamiz
+    catalog_keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🍔 Burger - 25,000 so'm", callback_data="product_burger")],
+            [InlineKeyboardButton(text="🌯 Lavash - 28,000 so'm", callback_data="product_lavash")],
+            [InlineKeyboardButton(text="🍕 Pizza - 60,000 so'm", callback_data="product_pizza")]
+        ]
+    )
+    
+    await message.answer(
+        "Rahmat! 📱 Raqamingiz qabul qilindi.\n\n"
+        "Mana bizning mahsulotlarimiz, o'zingizga yoqqanini tanlang:", 
+        reply_markup=catalog_keyboard
+    )
+    # State'ni tozalaymiz yoki keyingi qadamga o'tkazamiz
+    await state.clear()
 async def handle(request):
     return web.Response(text="Bot is running!")
-
+@dp.callback_query(F.data.startswith("product_"))
+async def process_product_choice(callback: types.CallbackQuery):
+    product_code = callback.data.split("_")[1]
+    
+    product_names = {
+        "burger": "Burger",
+        "lavash": "Lavash",
+        "pizza": "Pizza"
+    }
+    
+    chosen_product = product_names.get(product_code, "Mahsulot")
+    
+    await callback.message.answer(f"Siz **{chosen_product}**ni tanladingiz! 🛒\nEndi yetkazib berish manzilini yuboring.")
+    await callback.answer() # Tugmadagi yuklanish belgisini yo'qotish uchun
 # /start buyrug'i
 @dp.message(F.text == "/start")
 async def cmd_start(message: Message, state: FSMContext):
