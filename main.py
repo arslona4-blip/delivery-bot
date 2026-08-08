@@ -142,7 +142,7 @@ async def get_contact(message: Message, state: FSMContext):
     await message.answer("Rahmat! Endi yetkazib berish manzilini aniqlash uchun quyidagi tugmani bosib **lokatsiyangizni yuboring**:", reply_markup=location_keyboard)
     await state.set_state(OrderState.waiting_for_location)
 
-    @dp.message(F.location, OrderState.waiting_for_location)
+ @dp.message(F.location, OrderState.waiting_for_location)
 async def get_location(message: Message, state: FSMContext):
     data = await state.get_data()
     cart = data.get("cart", {})
@@ -154,7 +154,6 @@ async def get_location(message: Message, state: FSMContext):
         reply_markup=main_keyboard
     )
     await state.set_state(None)
-
     app.router.add_get("/", handle)
     runner = web.AppRunner(app)
     await runner.setup()
