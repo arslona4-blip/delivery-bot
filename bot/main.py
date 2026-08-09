@@ -41,6 +41,30 @@ from bot.handlers import (
 )
 
 
+def _start_health_server() -> None:
+    """Render Web Service uchun PORT da oddiy health endpoint."""
+    import os
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    port_raw = os.environ.get("PORT", "").strip()
+    if not port_raw.isdigit():
+        return
+    port = int(port_raw)
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"ok")
+
+        def log_message(self, format: str, *args) -> None:  # noqa: A003
+            return
+
+    server = HTTPServer(("0.0.0.0", port), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+
 def main() -> None:
     logging.basicConfig(
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -50,6 +74,7 @@ def main() -> None:
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN .env faylida ko'rsatilmagan.")
 
+    _start_health_server()
     init_db()
 
     app = Application.builder().token(BOT_TOKEN).build()
