@@ -1,0 +1,14 @@
+.venv
+venv
+__pycache__
+*.pyc
+.git
+data
+*.db
+*.log
+*.lnk
+*.bat
+*.vbs
+watchdog.ps1
+.env
+.cursor

@@ -1,0 +1,40 @@
+services:
+  - type: worker
+    name: yetkazib-berish-bot
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m bot.main
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.8"
+      - key: DATABASE_PATH
+        value: /var/data/bot.db
+      - key: BOT_TOKEN
+        sync: false
+      - key: ADMIN_IDS
+        sync: false
+      - key: COURIER_IDS
+        sync: false
+      - key: CARD_NUMBER
+        sync: false
+      - key: CARD_HOLDER
+        sync: false
+      - key: SHOP_NAME
+        sync: false
+      - key: SHOP_ADDRESS
+        sync: false
+      - key: SHOP_PHONE
+        sync: false
+      - key: SHOP_TELEGRAM
+        sync: false
+      - key: SHOP_HOURS
+        sync: false
+      - key: DELIVERY_PRICE
+        sync: false
+      - key: MIN_ORDER_AMOUNT
+        sync: false
+    disk:
+      name: bot-data
+      mountPath: /var/data
+      sizeGB: 1
