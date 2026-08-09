@@ -120,11 +120,17 @@ async def show_favorites(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def show_bonus(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from bot.timeutil import format_now_html
+
     points = get_bonus(update.effective_user.id)
     await update.message.reply_text(
-        f"🎁 Sizning bonus balingiz: {points:,}\n"
-        "1 ball ≈ 1 so'm chegirma.\n"
-        "Har bir to'langan buyurtmadan bonus yig'iladi."
+        f"🎁 <b>Bonus hisobingiz</b>\n"
+        f"{format_now_html()}\n\n"
+        f"⭐ Balans: <b><u>{points:,}</u></b> ball\n"
+        f"1 ball ≈ 1 so‘m chegirma\n\n"
+        f"Har to‘langan buyurtmadan bonus yig‘iladi.\n"
+        f"Buyurtmada bonus bilan to‘lash mumkin!",
+        parse_mode="HTML",
     )
 
 
@@ -298,7 +304,8 @@ async def start_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     product_id = int(query.data.split(":")[2])
     context.user_data["photo_product_id"] = product_id
     await query.message.reply_text(
-        "Mahsulot rasmini yuboring:",
+        "🖼 Mahsulot rasmini yuboring (telefon galereyasidan).\n"
+        "Yaxshi yoritilgan, aniq rasm — sotuvni oshiradi.",
         reply_markup=cancel_keyboard(),
     )
     return ExtraState.PHOTO
@@ -308,36 +315,56 @@ async def do_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.message.text == "❌ Bekor qilish":
         return await cancel_extra(update, context)
     if not update.message.photo:
-        await update.message.reply_text("Rasm yuboring.")
+        await update.message.reply_text("Iltimos, rasm yuboring (matn emas).")
         return ExtraState.PHOTO
     file_id = update.message.photo[-1].file_id
     pid = context.user_data.get("photo_product_id")
     set_product_image(pid, file_id)
     await update.message.reply_text(
-        "✅ Rasm saqlandi.",
+        f"✅ Rasm saqlandi! (#{pid})\n"
+        f"Katalogda mahsulot endi rasm bilan chiqadi.",
         reply_markup=menu_kb(update.effective_user.id),
     )
     return ConversationHandler.END
 
 
 async def report_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from bot.handlers import edit_or_reply
+    from bot.timeutil import format_now_html
+
     query = update.callback_query
-    await query.answer()
+    # query.answer() allaqachon admin_callback da chaqirilgan bo'lishi mumkin
+    try:
+        await query.answer()
+    except Exception:
+        pass
     if not is_admin(query.from_user.id):
         return
     report = get_daily_report()
     lines = [
-        "📈 Bugungi hisobot:",
-        f"Buyurtmalar: {report['orders_count']} ta — {report['orders_sum']:,} so'm",
-        f"To'langan/naqd: {report['paid_count']} ta — {report['paid_sum']:,} so'm",
-        "Top mahsulotlar:",
+        "📈 <b>1 kunlik hisobot</b>",
+        f"{format_now_html()}",
+        "",
+        "💵 <b>Bugungi jami savdo</b>",
+        f"📦 Buyurtmalar soni: <b>{report['orders_count']}</b> ta",
+        f"💰 Jami summa: <b><u>{report['orders_sum']:,}</u></b> so'm",
+        "",
+        f"✅ To'langan/naqd: {report['paid_count']} ta — <b>{report['paid_sum']:,}</b> so'm",
+        f"⏳ Kutilayotgan: {report['waiting_count']} ta — <b>{report['waiting_sum']:,}</b> so'm",
+        "",
+        "🏆 Top mahsulotlar:",
     ]
     if report["top"]:
         for row in report["top"]:
             lines.append(f"• {row['product_name']} — {row['qty']} dona")
     else:
         lines.append("• Hali yo'q")
-    await query.edit_message_text("\n".join(lines), reply_markup=admin_menu_keyboard())
+    await edit_or_reply(
+        query,
+        "\n".join(lines),
+        reply_markup=admin_menu_keyboard(),
+        parse_mode="HTML",
+    )
 
 
 def build_extra_conversations() -> list:

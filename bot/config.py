@@ -49,20 +49,19 @@ SHOP_ADDRESS = os.getenv("SHOP_ADDRESS", "Toshkent sh.")
 SHOP_PHONE = os.getenv("SHOP_PHONE", "+998 90 123 45 67")
 SHOP_TELEGRAM = os.getenv("SHOP_TELEGRAM", "@support")
 SHOP_HOURS = os.getenv("SHOP_HOURS", "09:00 - 22:00")
+BOT_USERNAME = os.getenv("BOT_USERNAME", "yetkazib_berish_xizmat_bot").lstrip("@")
+REFERRAL_BONUS = int(os.getenv("REFERRAL_BONUS", "1000"))
+WEBAPP_PORT = int(os.getenv("WEBAPP_PORT", "8088"))
+# Cloudflare tunnel / hosting URL, masalan https://xxxx.trycloudflare.com
+MINIAPP_URL = os.getenv("MINIAPP_URL", "").rstrip("/")
 
 CARD_NUMBER = os.getenv("CARD_NUMBER", "").strip()
 CARD_HOLDER = os.getenv("CARD_HOLDER", SHOP_NAME).strip()
 PAYME_LINK = os.getenv("PAYME_LINK", "").strip()
 CLICK_LINK = os.getenv("CLICK_LINK", "").strip()
 
-DELIVERY_SLOTS = [
-    "Bugun 10:00–12:00",
-    "Bugun 12:00–15:00",
-    "Bugun 15:00–18:00",
-    "Bugun 18:00–21:00",
-    "Ertaga 10:00–14:00",
-    "Ertaga 14:00–18:00",
-]
+# Eski konstanta — endi bot.timeutil.get_delivery_slots() ishlatiladi
+DELIVERY_SLOTS = []
 
 
 def online_payment_enabled() -> bool:

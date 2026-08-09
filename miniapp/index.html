@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <title>Do'kon</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1 id="shopName">Do'kon</h1>
+      <p id="shopMeta" class="muted"></p>
+    </div>
+  </header>
+
+  <main>
+    <section id="viewCatalog" class="view active">
+      <div id="categories" class="chips"></div>
+      <div id="products" class="products"></div>
+    </section>
+
+    <section id="viewCart" class="view">
+      <div id="cartList" class="cart-list"></div>
+      <div class="cart-summary">
+        <div class="row"><span>Mahsulotlar</span><strong id="subtotalLabel">0 so'm</strong></div>
+        <div class="row"><span>Yetkazish</span><strong id="deliveryLabel">0 so'm</strong></div>
+        <div class="row total"><span>Jami</span><strong id="totalLabel">0 so'm</strong></div>
+        <p id="minOrderHint" class="hint"></p>
+      </div>
+
+      <form id="checkoutForm" class="checkout">
+        <label>
+          Telefon
+          <input id="phone" type="tel" inputmode="tel" placeholder="+998 90 123 45 67" required />
+        </label>
+        <label>
+          Manzil
+          <textarea id="address" rows="2" placeholder="Ko'cha, uy, mo'ljal" required></textarea>
+        </label>
+        <label>
+          Yetkazish vaqti
+          <select id="slot" required></select>
+        </label>
+        <label>
+          Izoh (ixtiyoriy)
+          <textarea id="note" rows="2" placeholder="Qo'ng'iroq qiling / eshik oldida qoldiring"></textarea>
+        </label>
+        <button type="submit" id="submitOrder" class="btn primary">Buyurtma berish</button>
+        <p id="orderStatus" class="status" hidden></p>
+      </form>
+    </section>
+  </main>
+
+  <nav class="bottom-nav">
+    <button type="button" class="nav-btn active" data-view="catalog">Katalog</button>
+    <button type="button" class="nav-btn" data-view="cart">
+      Savatcha
+      <span id="cartBadge" class="badge" hidden>0</span>
+    </button>
+  </nav>
+
+  <dialog id="variantDialog">
+    <form method="dialog" id="variantForm">
+      <h3 id="variantTitle">O'lcham tanlang</h3>
+      <div id="variantOptions" class="variant-options"></div>
+      <menu>
+        <button value="cancel" class="btn ghost">Bekor</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>

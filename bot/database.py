@@ -1,9 +1,14 @@
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime
 from typing import Any
 
 from bot.config import DATABASE_PATH, DELIVERY_PRICE, ORDER_STATUS_LABELS, PAYMENT_STATUS_LABELS
+from bot.timeutil import format_dt, money_html, now_tashkent
+
+
+def _now_iso() -> str:
+    return now_tashkent().isoformat()
+
 
 DEFAULT_CATEGORIES = [
     "🍞 Oziq-ovqat",
@@ -217,6 +222,13 @@ def _migrate_features(conn: sqlite3.Connection) -> None:
             min_order INTEGER NOT NULL DEFAULT 0,
             is_active INTEGER NOT NULL DEFAULT 1
         );
+
+        CREATE TABLE IF NOT EXISTS referrals (
+            referred_user_id INTEGER PRIMARY KEY,
+            referrer_user_id INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            rewarded INTEGER NOT NULL DEFAULT 0
+        );
         """
     )
     promo_count = conn.execute("SELECT COUNT(*) FROM promo_codes").fetchone()[0]
@@ -250,7 +262,7 @@ def upsert_user(user_id: int, full_name: str, username: str | None = None) -> No
                 username = excluded.username,
                 full_name = excluded.full_name
             """,
-            (user_id, username, full_name, datetime.now().isoformat()),
+            (user_id, username, full_name, _now_iso()),
         )
 
 
@@ -293,6 +305,16 @@ def get_category(category_id: int) -> sqlite3.Row | None:
 
 def create_category(name: str) -> int:
     with get_connection() as conn:
+        existing = conn.execute(
+            "SELECT id FROM categories WHERE name = ?",
+            (name,),
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE categories SET is_active = 1 WHERE id = ?",
+                (existing["id"],),
+            )
+            return int(existing["id"])
         cursor = conn.execute(
             "INSERT INTO categories (name, is_active) VALUES (?, 1)",
             (name,),
@@ -323,7 +345,7 @@ def get_products(active_only: bool = True, category_id: int | None = None) -> li
         if category_id is not None:
             query += " AND p.category_id = ?"
             params.append(category_id)
-        query += " ORDER BY p.id"
+        query += " ORDER BY p.name COLLATE NOCASE, p.id"
         rows = conn.execute(query, params).fetchall()
     return list(rows)
 
@@ -579,21 +601,29 @@ def get_cart_totals(user_id: int) -> tuple[int, int]:
 
 
 def format_cart(user_id: int) -> str:
+    from bot.timeutil import money_html
+
     items = get_cart(user_id)
     if not items:
-        return "🛒 Savatchangiz bo'sh."
+        return (
+            "🛒 Savatchangiz bo'sh\n\n"
+            "🛍 Katalogdan mahsulot tanlang — bir bosishda qo'shiladi!"
+        )
 
-    lines = ["🛒 Savatcha:\n"]
-    for item in items:
+    lines = ["🛒 <b>Sizning savatchangiz</b>", "┄┄┄┄┄┄┄┄┄┄┄┄"]
+    for i, item in enumerate(items, 1):
         line_total = item["price"] * item["quantity"]
         lines.append(
-            f"• {item['name']} x{item['quantity']} — {line_total:,} so'm"
+            f"{i}. {item['name']}\n"
+            f"   {item['quantity']} × {item['price']:,} = "
+            f"{money_html(line_total, with_emoji=False)}"
         )
     _, subtotal = get_cart_totals(user_id)
     total = subtotal + DELIVERY_PRICE
-    lines.append(f"\nMahsulotlar: {subtotal:,} so'm")
-    lines.append(f"Yetkazish: {DELIVERY_PRICE:,} so'm")
-    lines.append(f"💰 Jami: {total:,} so'm")
+    lines.append("┄┄┄┄┄┄┄┄┄┄┄┄")
+    lines.append(f"🛍 Mahsulotlar: {money_html(subtotal, with_emoji=False)}")
+    lines.append(f"🚚 Yetkazish: {money_html(DELIVERY_PRICE, with_emoji=False)}")
+    lines.append(f"✨ {money_html(total)} <b>← JAMI</b> ✨")
     return "\n".join(lines)
 
 
@@ -612,7 +642,7 @@ def create_order(
     bonus_spent: int = 0,
     subtotal: int = 0,
 ) -> int:
-    now = datetime.now().isoformat()
+    now = _now_iso()
     with get_connection() as conn:
         cursor = conn.execute(
             """
@@ -666,6 +696,30 @@ def save_order_items(order_id: int, user_id: int) -> None:
         )
 
 
+def save_order_items_direct(
+    order_id: int, items: list[dict[str, Any]]
+) -> None:
+    """Mini App / tashqi buyurtma uchun."""
+    with get_connection() as conn:
+        conn.executemany(
+            """
+            INSERT INTO order_items (
+                order_id, product_id, product_name, price, quantity
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    order_id,
+                    int(item["product_id"]),
+                    str(item["name"]),
+                    int(item["price"]),
+                    int(item["quantity"]),
+                )
+                for item in items
+            ],
+        )
+
+
 def get_order_items(order_id: int) -> list[sqlite3.Row]:
     with get_connection() as conn:
         rows = conn.execute(
@@ -688,6 +742,20 @@ def get_order(order_id: int) -> sqlite3.Row | None:
     return row
 
 
+def delete_order(order_id: int) -> bool:
+    """Buyurtma va uning mahsulotlarini butunlay o'chiradi."""
+    with get_connection() as conn:
+        exists = conn.execute(
+            "SELECT id FROM orders WHERE id = ?",
+            (order_id,),
+        ).fetchone()
+        if not exists:
+            return False
+        conn.execute("DELETE FROM order_items WHERE order_id = ?", (order_id,))
+        conn.execute("DELETE FROM orders WHERE id = ?", (order_id,))
+    return True
+
+
 def get_user_orders(user_id: int, limit: int = 10) -> list[sqlite3.Row]:
     with get_connection() as conn:
         rows = conn.execute(
@@ -700,6 +768,28 @@ def get_user_orders(user_id: int, limit: int = 10) -> list[sqlite3.Row]:
             (user_id, limit),
         ).fetchall()
     return list(rows)
+
+
+def get_last_delivery_address(user_id: int) -> str | None:
+    """Oxirgi muvaffaqiyatli buyurtma manzili (lokatsiya emas, matn)."""
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT delivery_address FROM orders
+            WHERE user_id = ?
+              AND delivery_address IS NOT NULL
+              AND delivery_address != ''
+              AND delivery_address != 'Lokatsiya'
+              AND status != 'cancelled'
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (user_id,),
+        ).fetchone()
+    if not row:
+        return None
+    addr = (row["delivery_address"] or "").strip()
+    return addr or None
 
 
 def get_orders_by_status(status: str, limit: int = 20) -> list[sqlite3.Row]:
@@ -724,7 +814,7 @@ def update_order_status(order_id: int, status: str) -> None:
             SET status = ?, updated_at = ?
             WHERE id = ?
             """,
-            (status, datetime.now().isoformat(), order_id),
+            (status, _now_iso(), order_id),
         )
 
 
@@ -736,7 +826,7 @@ def update_payment_status(order_id: int, payment_status: str) -> None:
             SET payment_status = ?, updated_at = ?
             WHERE id = ?
             """,
-            (payment_status, datetime.now().isoformat(), order_id),
+            (payment_status, _now_iso(), order_id),
         )
 
 
@@ -753,6 +843,9 @@ def format_order_items(order_id: int) -> str:
     return "\n".join(lines)
 
 
+from bot.timeutil import money_html
+
+
 def format_order(row: sqlite3.Row) -> str:
     status = ORDER_STATUS_LABELS.get(row["status"], row["status"])
     payment = PAYMENT_STATUS_LABELS.get(row["payment_status"], row["payment_status"])
@@ -766,12 +859,13 @@ def format_order(row: sqlite3.Row) -> str:
         f"📦 Buyurtma #{row['id']}",
         f"Holat: {status}",
         f"To'lov: {payment}",
+        f"📅 Berilgan: ❰ {format_dt(row['created_at'])} ❱",
     ]
     if items_text:
         parts.append(items_text)
     slot = row["delivery_slot"] if "delivery_slot" in row.keys() else None
     if slot:
-        parts.append(f"🕒 Vaqt: {slot}")
+        parts.append(f"🕒 Yetkazish: ❰ {slot} ❱")
     promo = row["promo_code"] if "promo_code" in row.keys() else None
     discount = row["discount"] if "discount" in row.keys() else 0
     if promo:
@@ -785,7 +879,7 @@ def format_order(row: sqlite3.Row) -> str:
             f"🏁 Qayerga: {delivery}",
             f"📝 Izoh: {row['description'] or '—'}",
             f"📞 Telefon: {row['phone']}",
-            f"💰 Jami: {row['price']:,} so'm",
+            f"✨💰 JAMI: {row['price']:,} so'm ✨",
         ]
     )
     return "\n".join(parts)
@@ -801,11 +895,32 @@ def get_stats() -> dict[str, Any]:
         active_orders = conn.execute(
             "SELECT COUNT(*) FROM orders WHERE status IN ('accepted', 'in_delivery')"
         ).fetchone()[0]
+        delivered = conn.execute(
+            "SELECT COUNT(*) FROM orders WHERE status = 'delivered'"
+        ).fetchone()[0]
+        revenue = conn.execute(
+            """
+            SELECT COALESCE(SUM(price), 0) FROM orders
+            WHERE status != 'cancelled'
+            """
+        ).fetchone()[0]
+        today_row = conn.execute(
+            """
+            SELECT COUNT(*) AS cnt, COALESCE(SUM(price), 0) AS total
+            FROM orders
+            WHERE date(created_at) = date('now', 'localtime')
+              AND status != 'cancelled'
+            """
+        ).fetchone()
     return {
         "total_users": total_users,
         "total_orders": total_orders,
         "new_orders": new_orders,
         "active_orders": active_orders,
+        "delivered_orders": delivered,
+        "revenue_sum": int(revenue or 0),
+        "today_orders": int(today_row["cnt"] or 0),
+        "today_sum": int(today_row["total"] or 0),
     }
 
 
@@ -834,7 +949,7 @@ def add_favorite(user_id: int, product_id: int) -> None:
             INSERT OR IGNORE INTO favorites (user_id, product_id, created_at)
             VALUES (?, ?, ?)
             """,
-            (user_id, product_id, datetime.now().isoformat()),
+            (user_id, product_id, _now_iso()),
         )
 
 
@@ -864,7 +979,7 @@ def get_favorites(user_id: int) -> list[sqlite3.Row]:
             JOIN products p ON p.id = f.product_id
             LEFT JOIN categories c ON c.id = p.category_id
             WHERE f.user_id = ? AND p.is_active = 1
-            ORDER BY f.created_at DESC
+            ORDER BY p.name COLLATE NOCASE
             """,
             (user_id,),
         ).fetchall()
@@ -910,6 +1025,29 @@ def add_bonus(user_id: int, points: int) -> None:
             "UPDATE users SET bonus_points = COALESCE(bonus_points, 0) + ? WHERE user_id = ?",
             (points, user_id),
         )
+
+
+def save_referral(referred_user_id: int, referrer_user_id: int) -> bool:
+    """Yangi foydalanuvchi referralini saqlaydi. Takror bo'lsa False."""
+    if referred_user_id == referrer_user_id:
+        return False
+    with get_connection() as conn:
+        exists = conn.execute(
+            "SELECT 1 FROM referrals WHERE referred_user_id = ?",
+            (referred_user_id,),
+        ).fetchone()
+        if exists:
+            return False
+        if not get_user(referrer_user_id):
+            return False
+        conn.execute(
+            """
+            INSERT INTO referrals (referred_user_id, referrer_user_id, created_at, rewarded)
+            VALUES (?, ?, ?, 1)
+            """,
+            (referred_user_id, referrer_user_id, _now_iso()),
+        )
+    return True
 
 
 def spend_bonus(user_id: int, points: int) -> bool:
@@ -971,42 +1109,53 @@ def get_all_user_ids() -> list[int]:
 
 
 def get_daily_report() -> dict[str, Any]:
-    today = datetime.now().date().isoformat()
+    today = now_tashkent().strftime("%Y-%m-%d")
     with get_connection() as conn:
         orders = conn.execute(
             """
             SELECT COUNT(*) AS cnt, COALESCE(SUM(price), 0) AS total
             FROM orders
-            WHERE date(created_at) = date(?) AND status != 'cancelled'
-            """,
-            (today,),
+            WHERE date(created_at) = date('now', 'localtime')
+              AND status != 'cancelled'
+            """
         ).fetchone()
         paid = conn.execute(
             """
             SELECT COUNT(*) AS cnt, COALESCE(SUM(price), 0) AS total
             FROM orders
-            WHERE date(created_at) = date(?)
+            WHERE date(created_at) = date('now', 'localtime')
               AND payment_status IN ('paid', 'cash')
-            """,
-            (today,),
+            """
+        ).fetchone()
+        waiting = conn.execute(
+            """
+            SELECT COUNT(*) AS cnt, COALESCE(SUM(price), 0) AS total
+            FROM orders
+            WHERE date(created_at) = date('now', 'localtime')
+              AND payment_status IN ('pending', 'card_waiting')
+              AND status != 'cancelled'
+            """
         ).fetchone()
         top = conn.execute(
             """
             SELECT oi.product_name, SUM(oi.quantity) AS qty
             FROM order_items oi
             JOIN orders o ON o.id = oi.order_id
-            WHERE date(o.created_at) = date(?) AND o.status != 'cancelled'
+            WHERE date(o.created_at) = date('now', 'localtime')
+              AND o.status != 'cancelled'
             GROUP BY oi.product_name
             ORDER BY qty DESC
             LIMIT 5
-            """,
-            (today,),
+            """
         ).fetchall()
     return {
-        "orders_count": orders["cnt"],
-        "orders_sum": orders["total"],
-        "paid_count": paid["cnt"],
-        "paid_sum": paid["total"],
+        "date": today,
+        "orders_count": int(orders["cnt"] or 0),
+        "orders_sum": int(orders["total"] or 0),
+        "paid_count": int(paid["cnt"] or 0),
+        "paid_sum": int(paid["total"] or 0),
+        "waiting_count": int(waiting["cnt"] or 0),
+        "waiting_sum": int(waiting["total"] or 0),
         "top": list(top),
     }
 

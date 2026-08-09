@@ -1,6 +1,13 @@
+import re
 from enum import IntEnum
 
-from telegram import ReplyKeyboardMarkup, Update
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    ReplyKeyboardMarkup,
+    Update,
+    WebAppInfo,
+)
 from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
@@ -13,13 +20,15 @@ from telegram.ext import (
 from bot.config import (
     ADMIN_IDS,
     BONUS_PERCENT,
+    BOT_USERNAME,
     CARD_HOLDER,
     CARD_NUMBER,
     COURIER_IDS,
     DELIVERY_PRICE,
-    DELIVERY_SLOTS,
     MIN_ORDER_AMOUNT,
+    MINIAPP_URL,
     PAYMENT_PROVIDER_TOKEN,
+    REFERRAL_BONUS,
     SHOP_ADDRESS,
     SHOP_HOURS,
     SHOP_NAME,
@@ -39,6 +48,7 @@ from bot.database import (
     create_variant,
     decrease_stock_for_cart,
     delete_category,
+    delete_order,
     delete_product,
     delete_variant,
     format_cart,
@@ -48,19 +58,21 @@ from bot.database import (
     get_cart_totals,
     get_categories,
     get_category,
+    get_favorites,
     get_order,
     get_orders_by_status,
     get_product,
     get_product_by_id,
     get_products,
     get_stats,
+    get_last_delivery_address,
     get_user,
     get_user_orders,
     get_variants,
-    is_favorite,
     product_display_price,
     remove_from_cart,
     save_order_items,
+    save_referral,
     set_cart_quantity,
     set_product_active,
     set_user_phone,
@@ -71,8 +83,13 @@ from bot.database import (
     upsert_user,
 )
 from bot.keyboards import (
+    admin_all_products_list_keyboard,
+    admin_categories_list_keyboard,
     admin_category_item_keyboard,
+    admin_category_products_header_keyboard,
+    admin_category_products_list_keyboard,
     admin_menu_keyboard,
+    admin_delete_order_confirm_keyboard,
     admin_order_keyboard,
     admin_payment_keyboard,
     admin_product_item_keyboard,
@@ -88,14 +105,15 @@ from bot.keyboards import (
     confirm_order_keyboard,
     contact_keyboard,
     delivery_slots_keyboard,
-    favorite_toggle_keyboard,
     location_keyboard,
     main_menu_keyboard,
+    more_menu_keyboard,
     order_actions_keyboard,
     payment_keyboard,
     product_keyboard,
     promo_keyboard,
 )
+from bot.timeutil import format_now_html, get_delivery_slots, money_html
 
 
 class OrderState(IntEnum):
@@ -130,36 +148,181 @@ def menu_for(user_id: int):
     )
 
 
+def parse_price_sum(raw: str) -> int | None:
+    """'15000', '15 000', '15000 so'm' kabi yozuvlardan narxni oladi."""
+    if not raw:
+        return None
+    digits = re.sub(r"[^\d]", "", raw)
+    if not digits:
+        return None
+    value = int(digits)
+    return value if value > 0 else None
+
+
+async def edit_or_reply(query, text: str, reply_markup=None, parse_mode=None) -> None:
+    """Rasmli xabarda edit_message_text ishlamaydi — yangi xabar yuboriladi."""
+    message = query.message
+    has_photo = bool(message and message.photo)
+    if not has_photo:
+        try:
+            await query.edit_message_text(
+                text, reply_markup=reply_markup, parse_mode=parse_mode
+            )
+            return
+        except Exception:
+            pass
+    await message.reply_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
+    is_new = get_user(user.id) is None
     upsert_user(user.id, user.full_name, user.username)
+    name = (user.first_name or "mehmon").strip()
+
+    # Do'st taklifi: /start ref123456
+    if is_new and context.args:
+        raw = (context.args[0] or "").strip()
+        if raw.lower().startswith("ref"):
+            digits = "".join(ch for ch in raw[3:] if ch.isdigit())
+            if digits:
+                referrer_id = int(digits)
+                if save_referral(user.id, referrer_id):
+                    add_bonus(referrer_id, REFERRAL_BONUS)
+                    try:
+                        await context.bot.send_message(
+                            referrer_id,
+                            f"🎉 Do‘stingiz botga qo‘shildi!\n"
+                            f"+{REFERRAL_BONUS:,} bonus ball berildi.",
+                        )
+                    except Exception:
+                        pass
+
+    bot_link = f"https://t.me/{BOT_USERNAME}"
+    share_url = (
+        "https://t.me/share/url?url="
+        f"{bot_link}?start=ref{user.id}"
+        "&text=Baraka%20Market%20%E2%80%94%20tez%20yetkazib%20berish!"
+    )
 
     await update.message.reply_text(
-        f"Assalomu alaykum! 👋\n\n"
-        f"«{SHOP_NAME}» do'konining yetkazib berish botiga xush kelibsiz.\n"
-        f"📍 Do'kon manzili: {SHOP_ADDRESS}\n\n"
-        "Katalogdan mahsulot tanlang, savatchaga qo'shing va buyurtma bering.",
+        f"✨ <b>Assalomu alaykum, {name}!</b>\n\n"
+        f"🏪 <b>{SHOP_NAME}</b>\n"
+        f"🚚 Uyingizgacha tez yetkazib beramiz\n"
+        f"{format_now_html()}\n\n"
+        f"┌──────────────┐\n"
+        f"│ 📍 {SHOP_ADDRESS}\n"
+        f"│ 🕐 {SHOP_HOURS}\n"
+        f"│ 📞 {SHOP_PHONE}\n"
+        f"└──────────────┘\n\n"
+        f"🏷 Promo: <b>BARAKA10</b> — 10% chegirma "
+        f"(min {MIN_ORDER_AMOUNT:,} so‘m)\n"
+        f"👇 Bir bosishda buyurtma boshlang!",
         reply_markup=menu_for(user.id),
+        parse_mode="HTML",
+    )
+    start_rows: list[list[InlineKeyboardButton]] = []
+    if MINIAPP_URL:
+        start_rows.append(
+            [
+                InlineKeyboardButton(
+                    "🛒 Do'konni ochish",
+                    web_app=WebAppInfo(url=MINIAPP_URL),
+                )
+            ]
+        )
+    start_rows.extend(
+        [
+            [
+                InlineKeyboardButton(
+                    "🛍 Katalogni ochish", callback_data="catalog:list"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🛒 Savatcham", callback_data="cart:view"
+                ),
+                InlineKeyboardButton(
+                    "📞 Aloqa", callback_data="catalog:contact"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    "👥 Do‘stlarga ulashish", url=share_url
+                )
+            ],
+        ]
+    )
+    await update.message.reply_text(
+        "Nimadan boshlaymiz? 😊",
+        reply_markup=InlineKeyboardMarkup(start_rows),
     )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
-        "📌 Qanday foydalanish:\n"
-        "1. «🛍 Katalog» dan mahsulot tanlang\n"
-        "2. Savatchaga qo'shing\n"
-        "3. «🛒 Savatcha» → Rasmiylashtirish\n"
-        "4. «📍 Joylashuv» tugmasini bosing\n\n"
-        "Savollar bo'lsa, «📞 Aloqa» bo'limidan foydalaning."
+        "🧭 <b>Qanday buyurtma beriladi?</b>\n\n"
+        "1️⃣ <b>Katalog</b> — yoqqan mahsulotni bosing\n"
+        "    (avtomatik savatchaga tushadi ✅)\n"
+        "2️⃣ <b>Savatcha</b> — miqdorni sozlang\n"
+        "3️⃣ <b>Buyurtma berish</b> — manzil + vaqt\n"
+        "4️⃣ Tasdiqlang va to‘lovni tanlang\n\n"
+        f"🏷 Promo: <b>BARAKA10</b> (10%, min {MIN_ORDER_AMOUNT:,} so‘m)\n"
+        f"👥 Do‘st taklif qilsangiz — +{REFERRAL_BONUS:,} bonus\n"
+        "   («⋯ Ko‘proq» → «👥 Ulashish»)\n\n"
+        "Savol bo‘lsa — «📞 Aloqa» ni bosing.",
+        parse_mode="HTML",
+    )
+
+
+async def share_invite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    bot_link = f"https://t.me/{BOT_USERNAME}?start=ref{user_id}"
+    share_url = (
+        "https://t.me/share/url?url="
+        f"{bot_link}"
+        "&text=Baraka%20Market%20yetkazib%20berish%20%E2%80%94%20sinab%20ko%E2%80%98ring!"
+    )
+    await update.message.reply_text(
+        f"👥 <b>Do‘stlarni taklif qiling!</b>\n\n"
+        f"Har bir yangi do‘st uchun <b>+{REFERRAL_BONUS:,}</b> bonus ball.\n\n"
+        f"🔗 Sizning havolangiz:\n"
+        f"<code>{bot_link}</code>\n\n"
+        f"Pastdagi tugma orqali Telegram’da ulashing 👇",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("📤 Ulashish", url=share_url)]]
+        ),
     )
 
 
 async def contact_info(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
-        f"📞 Aloqa — {SHOP_NAME}:\n"
-        f"Telegram: {SHOP_TELEGRAM}\n"
-        f"Telefon: {SHOP_PHONE}\n"
-        f"Ish vaqti: {SHOP_HOURS}"
+        f"📞 <b>Biz bilan bog‘laning</b>\n"
+        f"🏪 {SHOP_NAME}\n"
+        f"{format_now_html()}\n\n"
+        f"📱 Telefon: <b>{SHOP_PHONE}</b>\n"
+        f"💬 Telegram: {SHOP_TELEGRAM}\n"
+        f"📍 Manzil: {SHOP_ADDRESS}\n"
+        f"🕐 Ish vaqti: {SHOP_HOURS}\n\n"
+        f"⏳ Buyurtmangizni tez qabul qilamiz!",
+        parse_mode="HTML",
+    )
+
+
+async def show_more_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(
+        "✨ <b>Qo‘shimcha imkoniyatlar</b>\n"
+        "Qidiruv, sevimlilar, bonus va yordam shu yerda:",
+        reply_markup=more_menu_keyboard(),
+        parse_mode="HTML",
+    )
+
+
+async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(
+        "🏠 Asosiy menyu\nKerakli bo‘limni tanlang 👇",
+        reply_markup=menu_for(update.effective_user.id),
     )
 
 
@@ -184,22 +347,40 @@ async def show_catalog(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not categories:
         products = get_products()
         if not products:
-            text = "Hozircha mahsulotlar yo'q."
+            text = (
+                "🛍 <b>Katalog</b>\n\n"
+                "Hozircha mahsulotlar yo‘q.\n"
+                "Tez orada yangilanadi — qayta urinib ko‘ring!"
+            )
             if update.callback_query:
-                await update.callback_query.edit_message_text(text)
+                await edit_or_reply(
+                    update.callback_query, text, parse_mode="HTML"
+                )
             else:
-                await update.message.reply_text(text)
+                await update.message.reply_text(text, parse_mode="HTML")
             return
-        text = f"🛍 {SHOP_NAME} katalogi\nMahsulotni tanlang:"
+        text = (
+            f"🛍 <b>{SHOP_NAME}</b>\n"
+            f"{format_now_html()}\n"
+            f"Mahsulotni tanlang — bir bosishda savatchaga tushadi ✨"
+        )
         markup = catalog_keyboard(products, cart_qty=_cart_qty_by_product(user_id))
     else:
-        text = f"🛍 {SHOP_NAME} katalogi\nToifani tanlang:"
+        text = (
+            f"🛍 <b>{SHOP_NAME} katalogi</b>\n"
+            f"{format_now_html()}\n"
+            f"Toifani tanlang va tanlovni boshlang 👇"
+        )
         markup = catalog_categories_keyboard(categories)
 
     if update.callback_query:
-        await update.callback_query.edit_message_text(text, reply_markup=markup)
+        await edit_or_reply(
+            update.callback_query, text, reply_markup=markup, parse_mode="HTML"
+        )
     else:
-        await update.message.reply_text(text, reply_markup=markup)
+        await update.message.reply_text(
+            text, reply_markup=markup, parse_mode="HTML"
+        )
 
 
 async def show_category_products(
@@ -210,49 +391,125 @@ async def show_category_products(
     products = get_products(category_id=category_id)
     title = category["name"] if category else "Toifa"
     if not products:
-        text = f"{title}\n\nBu toifada mahsulot yo'q."
+        text = (
+            f"📁 <b>{title}</b>\n\n"
+            f"Bu toifada hozircha mahsulot yo‘q.\n"
+            f"Boshqa toifani ko‘ring 👇"
+        )
         markup = catalog_categories_keyboard(get_categories())
     else:
-        text = f"{title}\nMahsulotni tanlang:"
+        text = (
+            f"📁 <b>{title}</b>\n"
+            f"{format_now_html()}\n"
+            f"{len(products)} ta mahsulot — tanlang ✨"
+        )
         markup = catalog_keyboard(
             products,
             category_id,
             cart_qty=_cart_qty_by_product(user_id),
         )
 
-    await update.callback_query.edit_message_text(text, reply_markup=markup)
+    await edit_or_reply(
+        update.callback_query, text, reply_markup=markup, parse_mode="HTML"
+    )
 
 
 async def show_cart_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     items = get_cart(user_id)
-    text = format_cart(user_id)
-
-    if update.callback_query:
-        if not items:
-            await update.callback_query.edit_message_text(text)
-            return
-        await update.callback_query.edit_message_text(
-            text, reply_markup=cart_keyboard(items)
+    text = f"{format_now_html()}\n\n{format_cart(user_id)}"
+    if not items:
+        markup = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        "🛍 Katalogni ochish", callback_data="catalog:list"
+                    )
+                ]
+            ]
         )
     else:
-        if not items:
-            await update.message.reply_text(
-                text, reply_markup=main_menu_keyboard(is_admin(user_id))
-            )
-            return
-        await update.message.reply_text(text, reply_markup=cart_keyboard(items))
+        markup = cart_keyboard(items)
+
+    if update.callback_query:
+        await edit_or_reply(
+            update.callback_query, text, reply_markup=markup, parse_mode="HTML"
+        )
+    else:
+        await update.message.reply_text(
+            text,
+            reply_markup=markup,
+            parse_mode="HTML",
+        )
+        await update.message.reply_text(
+            "Asosiy menyu 👇",
+            reply_markup=menu_for(user_id),
+        )
 
 
 async def product_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
 
     if query.data == "catalog:list":
+        await query.answer()
         await show_catalog(update, context)
         return
 
+    if query.data == "catalog:contact":
+        await query.answer()
+        await query.message.reply_text(
+            f"📞 <b>Biz bilan bog‘laning</b>\n"
+            f"🏪 {SHOP_NAME}\n"
+            f"{format_now_html()}\n\n"
+            f"📱 Telefon: <b>{SHOP_PHONE}</b>\n"
+            f"💬 Telegram: {SHOP_TELEGRAM}\n"
+            f"📍 Manzil: {SHOP_ADDRESS}\n"
+            f"🕐 Ish vaqti: {SHOP_HOURS}",
+            parse_mode="HTML",
+        )
+        return
+
+    if query.data == "catalog:search":
+        await query.answer()
+        await query.message.reply_text(
+            "🔍 <b>Qidiruv</b>\n\n"
+            "Mahsulot nomini yozing — topib beraman!\n"
+            "Yoki pastdan «⋯ Ko‘proq» → «🔍 Qidiruv».",
+            parse_mode="HTML",
+        )
+        return
+
+    if query.data == "catalog:favs":
+        await query.answer()
+        products = get_favorites(query.from_user.id)
+        if not products:
+            await query.message.reply_text(
+                "⭐ <b>Sevimlilar bo‘sh</b>\n\n"
+                "Mahsulotda ⭐ tugmasini bosib saqlang — "
+                "keyin tez topasiz!",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton(
+                                "🛍 Katalog", callback_data="catalog:list"
+                            )
+                        ]
+                    ]
+                ),
+            )
+            return
+        await query.message.reply_text(
+            "⭐ <b>Sevimlilaringiz</b>\nYoqqanlaringiz shu yerda:",
+            parse_mode="HTML",
+            reply_markup=catalog_keyboard(
+                products, cart_qty=_cart_qty_by_product(query.from_user.id)
+            ),
+        )
+        return
+
     if query.data.startswith("catalog:cat:"):
+        await query.answer()
         category_id = int(query.data.split(":")[2])
         await show_category_products(update, context, category_id)
         return
@@ -260,31 +517,34 @@ async def product_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     product_id = int(query.data.split(":")[1])
     product = get_product(product_id)
     if not product:
+        await query.answer()
         await query.edit_message_text("Mahsulot topilmadi.")
         return
 
     variants = get_variants(product_id)
+
+    # O'lchamsiz mahsulot — darhol savatga, qisqa bildirishnoma (o'zi yo'qoladi)
     if not variants:
         add_to_cart(query.from_user.id, product_id, 1, 0)
         count, _ = get_cart_totals(query.from_user.id)
-        await query.answer(f"✅ Qo'shildi! Savatchada: {count} ta", show_alert=False)
+        await query.answer(f"✅ Savatchaga qo'shildi · {count} ta", show_alert=False)
         if product["category_id"]:
             await show_category_products(update, context, product["category_id"])
         else:
             await show_catalog(update, context)
         return
 
+    # O'lchamli mahsulot — rasm + o'lcham tanlash
+    await query.answer()
     category_name = product["category_name"] or "—"
     price_text = product_display_price(product)
+    desc = product["description"] or "Sifatli mahsulot"
     text = (
-        f"🛍 {product['name']}\n"
-        f"🗂 {category_name}\n"
-        f"💰 {price_text}\n"
-        f"📝 {product['description'] or '—'}\n\n"
-        "O'lchamni tanlang:"
-    )
-    fav_kb = favorite_toggle_keyboard(
-        product_id, is_favorite(query.from_user.id, product_id)
+        f"✨ <b>{product['name']}</b>\n"
+        f"📁 {category_name}\n"
+        f"✨ 💰 <b><u>{price_text}</u></b> ✨\n"
+        f"📝 {desc}\n\n"
+        "O‘lchamni tanlang 👇"
     )
     size_kb = product_keyboard(
         product_id,
@@ -292,7 +552,6 @@ async def product_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         variants,
         cart_variant_qty=_cart_qty_by_variant(query.from_user.id, product_id),
     )
-    # merge fav row into size keyboard by sending two messages if photo
     image_id = None
     try:
         image_id = product["image_file_id"]
@@ -300,28 +559,25 @@ async def product_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         image_id = None
 
     if image_id:
-        await query.message.reply_photo(photo=image_id, caption=text, reply_markup=size_kb)
-        await query.message.reply_text("Sevimli:", reply_markup=fav_kb)
-        await query.answer()
+        try:
+            await query.message.reply_photo(
+                photo=image_id,
+                caption=text,
+                reply_markup=size_kb,
+                parse_mode="HTML",
+            )
+        except Exception:
+            await query.message.reply_text(
+                text, reply_markup=size_kb, parse_mode="HTML"
+            )
     else:
-        await query.edit_message_text(text, reply_markup=size_kb)
-        await query.message.reply_text("Sevimli:", reply_markup=fav_kb)
+        await edit_or_reply(query, text, reply_markup=size_kb, parse_mode="HTML")
 
 
 async def cart_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | None:
     query = update.callback_query
-    await query.answer()
     user_id = query.from_user.id
     data = query.data
-
-    if data == "cart:view":
-        await show_cart_message(update, context)
-        return None
-
-    if data == "cart:clear":
-        clear_cart(user_id)
-        await query.edit_message_text("🛒 Savatcha tozalandi.")
-        return None
 
     if data.startswith("cart_add:"):
         parts = data.split(":")
@@ -341,11 +597,25 @@ async def cart_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             label = product["name"]
         add_to_cart(user_id, product_id, 1, variant_id)
         count, _ = get_cart_totals(user_id)
-        await query.answer(f"✅ {label} qo'shildi! Savat: {count}")
+        await query.answer(
+            f"✅ Savatchaga qo'shildi · {label} ({count} ta)",
+            show_alert=False,
+        )
         if product["category_id"]:
             await show_category_products(update, context, product["category_id"])
         else:
             await show_catalog(update, context)
+        return None
+
+    await query.answer()
+
+    if data == "cart:view":
+        await show_cart_message(update, context)
+        return None
+
+    if data == "cart:clear":
+        clear_cart(user_id)
+        await edit_or_reply(query, "🛒 Savatcha tozalandi.")
         return None
 
     if data.startswith("cart_inc:"):
@@ -394,7 +664,7 @@ async def start_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not items:
         text = "Savatcha bo'sh. Avval mahsulot qo'shing."
         if query:
-            await query.edit_message_text(text)
+            await edit_or_reply(query, text)
         else:
             await update.message.reply_text(text)
         return ConversationHandler.END
@@ -423,25 +693,37 @@ async def start_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         "description": "",
     }
 
+    last_addr = get_last_delivery_address(user_id)
     text = (
         f"{format_cart(user_id)}\n\n"
         "📍 Qayerga yetkazilsin?\n"
-        "Pastdagi «📍 Joylashuv» tugmasini bosing."
+        "«📍 Joylashuvni yuborish» yoki manzilni yozing."
     )
+    if last_addr:
+        text += "\nYoki oxirgi manzilni tanlang."
+    markup = location_keyboard(last_addr)
     if query:
-        await query.edit_message_text("Buyurtma davom etmoqda...")
-        await query.message.reply_text(text, reply_markup=location_keyboard())
+        await query.answer()
+        await query.message.reply_text(
+            text, reply_markup=markup, parse_mode="HTML"
+        )
     else:
-        await update.message.reply_text(text, reply_markup=location_keyboard())
+        await update.message.reply_text(
+            text, reply_markup=markup, parse_mode="HTML"
+        )
     return OrderState.DELIVERY
 
 
 async def continue_after_delivery(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
+    slots = get_delivery_slots()
     await update.message.reply_text(
-        "🕒 Yetkazish vaqtini tanlang:",
-        reply_markup=delivery_slots_keyboard(DELIVERY_SLOTS),
+        f"🕒 <b>Qachon yetkazaylik?</b>\n"
+        f"{format_now_html()}\n"
+        f"Qulay sana va vaqtni tanlang 👇",
+        reply_markup=delivery_slots_keyboard(slots),
+        parse_mode="HTML",
     )
     return OrderState.SLOT
 
@@ -455,15 +737,16 @@ async def receive_slot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         await query.message.reply_text("Menyu:", reply_markup=menu_for(query.from_user.id))
         return ConversationHandler.END
 
+    slots = get_delivery_slots()
     idx = int(query.data.split(":")[1])
-    context.user_data["order"]["delivery_slot"] = DELIVERY_SLOTS[idx]
-    await query.edit_message_text(f"🕒 Vaqt: {DELIVERY_SLOTS[idx]}")
-    await query.message.reply_text(
-        "🏷 Promo kod bo'lsa yozing (masalan BARAKA10)\n"
-        "yoki tugmani bosing:",
-        reply_markup=promo_keyboard(),
-    )
-    return OrderState.PROMO
+    if idx < 0 or idx >= len(slots):
+        await query.edit_message_text("Vaqt noto‘g‘ri. Qaytadan tanlang.")
+        return ConversationHandler.END
+    slot = slots[idx]
+    context.user_data["order"]["delivery_slot"] = slot
+    await query.edit_message_text(f"🕒 Yetkazish: {slot}")
+    # Promo bosqichi o'tkazib yuboriladi (kerak bo'lsa tasdiqda «🏷 Promo kod»)
+    return await ask_bonus(update, context)
 
 
 async def receive_promo_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -484,6 +767,11 @@ async def receive_promo_callback(
         await query.message.reply_text("Menyu:", reply_markup=menu_for(query.from_user.id))
         return ConversationHandler.END
     await query.edit_message_text("Promo ishlatilmadi.")
+    order = context.user_data.get("order") or {}
+    if order.get("phone"):
+        return await show_order_summary_message(
+            query.message, query.from_user, context
+        )
     return await ask_bonus(update, context)
 
 
@@ -498,7 +786,50 @@ async def apply_promo(
     context.user_data["order"]["promo_code"] = code.upper()
     context.user_data["order"]["discount"] = discount
     await update.message.reply_text(f"✅ Promo qo'llandi: −{discount:,} so'm")
+    # Agar allaqachon telefon bor (tasdiqdan kelgan) — xulosani yangilash
+    order = context.user_data.get("order") or {}
+    if order.get("phone"):
+        return await show_order_summary(update, context)
     return await ask_bonus(update, context)
+
+
+async def ask_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Har doim ishlaydigan telefon so'raydi (eski raqamni avtomatik o'tkazmaydi)."""
+    context.user_data.setdefault("order", {})
+    context.user_data["order"].pop("phone", None)
+
+    user = get_user(update.effective_user.id)
+    last_phone = None
+    if user:
+        try:
+            last_phone = (user["phone"] or "").strip() or None
+        except (KeyError, IndexError, TypeError):
+            last_phone = None
+
+    text = (
+        "📞 <b>Telefon raqamingizni qoldiring</b>\n\n"
+        "Yetkazib berish uchun <b>hozir ishlaydigan</b> raqam kerak.\n"
+        "Telegramdagi raqam eski, SIM almashtirilgan yoki "
+        "faol emas bo‘lishi mumkin — shunda bog‘lana olmaymiz.\n\n"
+        "<b>Qanday yuborasiz?</b>\n"
+        "1️⃣ «📱 Kontaktni yuborish» — Telegramdagi raqamingiz\n"
+        "2️⃣ 📎 → <b>Kontakt</b> — telefonda saqlangan raqamni tanlang\n"
+        "3️⃣ Qo‘lda yozing: <code>+998901234567</code>"
+    )
+    if last_phone:
+        text += (
+            f"\n\nSaqlangan raqam: <b>{last_phone}</b>\n"
+            "To‘g‘ri bo‘lsa — pastdagi «✅ Shu raqam» ni bosing.\n"
+            "Boshqa bo‘lsa — yangisini yuboring."
+        )
+
+    msg = update.effective_message
+    await msg.reply_text(
+        text,
+        reply_markup=contact_keyboard(last_phone),
+        parse_mode="HTML",
+    )
+    return OrderState.PHONE
 
 
 async def ask_bonus(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -507,9 +838,14 @@ async def ask_bonus(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["order"].setdefault("discount", 0)
     context.user_data["order"].setdefault("promo_code", "")
     context.user_data["order"]["bonus_spent"] = 0
+
+    # Bonus yo'q — to'g'ridan-to'g'ri telefon so'rash
+    if bonus <= 0:
+        return await ask_phone(update, context)
+
     msg = update.effective_message
     await msg.reply_text(
-        f"🎁 Bonus balingiz: {bonus:,}\nIshlatasizmi?",
+        f"🎁 Bonus: {bonus:,} ball\nIshlatasizmi?",
         reply_markup=bonus_keyboard(bonus),
     )
     return OrderState.BONUS
@@ -536,16 +872,7 @@ async def receive_bonus_callback(
     context.user_data["order"]["description"] = context.user_data["order"].get(
         "description", ""
     )
-    user = get_user(user_id)
-    if user and user["phone"]:
-        context.user_data["order"]["phone"] = user["phone"]
-        return await show_order_summary_message(query.message, query.from_user, context)
-
-    await query.message.reply_text(
-        "📱 Telefon raqamingizni yuboring:",
-        reply_markup=contact_keyboard(),
-    )
-    return OrderState.PHONE
+    return await ask_phone(update, context)
 
 
 async def receive_delivery(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -563,16 +890,25 @@ async def receive_delivery(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return await continue_after_delivery(update, context)
 
     text = (update.message.text or "").strip()
-    if text and text != "📍 Joylashuv":
+    # Oxirgi manzil tugmasi: "🏠 ..."
+    if text.startswith("🏠 "):
+        text = text[2:].strip()
+        if text.endswith("..."):
+            last = get_last_delivery_address(update.effective_user.id)
+            if last:
+                text = last
+
+    if text and text not in {"📍 Joylashuv", "📍 Joylashuvni yuborish"}:
         context.user_data["order"]["latitude"] = None
         context.user_data["order"]["longitude"] = None
         context.user_data["order"]["delivery_address"] = text
         await update.message.reply_text("✅ Manzil qabul qilindi.")
         return await continue_after_delivery(update, context)
 
+    last_addr = get_last_delivery_address(update.effective_user.id)
     await update.message.reply_text(
-        "📍 «Joylashuv» tugmasini bosing.",
-        reply_markup=location_keyboard(),
+        "📍 Joylashuvni yuboring yoki manzilni yozing.",
+        reply_markup=location_keyboard(last_addr),
     )
     return OrderState.DELIVERY
 
@@ -582,11 +918,28 @@ async def receive_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     text = (update.message.text or "").strip()
     if text == "❌ Bekor qilish":
         return await cancel_order_flow(update, context)
-    if text not in {"⏭ O'tkazib yuborish", "O'tkazib yuborish", "-"}:
+    if text not in {"-", ""} and not _is_skip_text(text):
         context.user_data["order"]["description"] = text
     else:
         context.user_data["order"]["description"] = ""
     return await continue_after_delivery(update, context)
+
+
+def _normalize_phone(raw: str) -> str | None:
+    """Telefonni tozalaydi. Kamida 9 ta raqam bo'lishi kerak."""
+    text = (raw or "").strip()
+    if text.startswith("✅ Shu raqam:"):
+        text = text.split(":", 1)[1].strip()
+    digits = re.sub(r"\D", "", text)
+    if len(digits) < 9:
+        return None
+    if text.startswith("+"):
+        return "+" + digits
+    if digits.startswith("998") and len(digits) >= 12:
+        return "+" + digits
+    if len(digits) == 9:
+        return "+998" + digits
+    return text if text.startswith("+") else ("+" + digits if digits else None)
 
 
 async def receive_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -595,18 +948,35 @@ async def receive_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
     phone = None
     if update.message.contact:
-        phone = update.message.contact.phone_number
+        phone = _normalize_phone(update.message.contact.phone_number or "")
     elif update.message.text:
-        phone = update.message.text.strip()
+        phone = _normalize_phone(update.message.text)
 
     if not phone:
+        user_row = get_user(update.effective_user.id)
+        last = None
+        if user_row:
+            try:
+                last = (user_row["phone"] or "").strip() or None
+            except (KeyError, IndexError, TypeError):
+                last = None
         await update.message.reply_text(
-            "Iltimos, telefon raqam yuboring yoki kontakt tugmasidan foydalaning."
+            "❌ Raqam noto‘g‘ri.\n\n"
+            "Ishlaydigan raqamni qoldiring:\n"
+            "• Kontakt tugmasi, yoki\n"
+            "• <code>+998901234567</code> ko‘rinishida yozing",
+            parse_mode="HTML",
+            reply_markup=contact_keyboard(last),
         )
         return OrderState.PHONE
 
     context.user_data["order"]["phone"] = phone
     set_user_phone(update.effective_user.id, phone)
+    await update.message.reply_text(
+        f"✅ Telefon qabul qilindi: <b>{phone}</b>\n"
+        "Yetkazishda shu raqam orqali bog‘lanamiz.",
+        parse_mode="HTML",
+    )
     return await show_order_summary(update, context)
 
 
@@ -629,19 +999,24 @@ async def show_order_summary_message(message, user, context: ContextTypes.DEFAUL
 
     cart_text = format_cart(user_id)
     summary = (
-        f"🧾 Buyurtma ma'lumotlari:\n\n"
-        f"{cart_text}\n"
-        f"🕒 Vaqt: {order.get('delivery_slot') or '—'}\n"
+        f"🧾 <b>Buyurtmani tekshiring</b>\n"
+        f"{format_now_html()}\n\n"
+        f"{cart_text}\n\n"
+        f"🕒 Yetkazish: <b><u>{order.get('delivery_slot') or '—'}</u></b>\n"
         f"🏷 Promo: {order.get('promo_code') or '—'} (−{discount:,})\n"
         f"🎁 Bonus: −{bonus_spent:,}\n"
         f"📍 Qayerdan: {order['pickup_address']}\n"
         f"🏁 Qayerga: {delivery}\n"
-        f"📞 Telefon: {order['phone']}\n"
-        f"💰 Jami: {total:,} so'm\n\n"
-        "Ma'lumotlar to'g'rimi?"
+        f"📞 Telefon: {order['phone']}\n\n"
+        f"✨ 💳 {money_html(total)} <b>← TO‘LOV</b> ✨\n\n"
+        "Hammasi to‘g‘rimi? Tasdiqlang 👇"
     )
-    await message.reply_text(summary, reply_markup=confirm_order_keyboard())
-    await message.reply_text("Asosiy menyu:", reply_markup=menu_for(user_id))
+    await message.reply_text(
+        summary, reply_markup=confirm_order_keyboard(), parse_mode="HTML"
+    )
+    await message.reply_text(
+        "Asosiy menyu 👇", reply_markup=menu_for(user_id)
+    )
     return OrderState.CONFIRM
 
 
@@ -667,6 +1042,14 @@ async def confirm_order_callback(
             reply_markup=menu_for(query.from_user.id),
         )
         return ConversationHandler.END
+
+    if query.data == "order:add_promo":
+        await query.message.reply_text(
+            "🏷 Promo kodni yozing (masalan BARAKA10)\n"
+            "yoki o'tkazib yuboring:",
+            reply_markup=promo_keyboard(),
+        )
+        return OrderState.PROMO
 
     order_data = context.user_data.get("order")
     if not order_data:
@@ -753,9 +1136,19 @@ async def cancel_order_flow(
 async def my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     orders = get_user_orders(update.effective_user.id)
     if not orders:
-        await update.message.reply_text("Sizda hali buyurtmalar yo'q.")
+        await update.message.reply_text(
+            f"📋 <b>Buyurtmalar</b>\n"
+            f"{format_now_html()}\n\n"
+            f"Sizda hali buyurtmalar yo‘q.\n"
+            f"Katalogdan tanlab berishingiz mumkin!",
+            parse_mode="HTML",
+        )
         return
 
+    await update.message.reply_text(
+        f"📋 <b>Buyurtmalaringiz</b>\n{format_now_html()}",
+        parse_mode="HTML",
+    )
     for order in orders:
         payment = order["payment_status"]
         can_pay = payment in {"pending", "rejected"}
@@ -777,8 +1170,9 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     await update.message.reply_text(
-        "🛠 Admin panel",
+        f"🛠 <b>Admin panel</b>\n{format_now_html()}",
         reply_markup=admin_menu_keyboard(),
+        parse_mode="HTML",
     )
 
 
@@ -794,20 +1188,27 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     if action == "menu":
         await query.edit_message_text(
-            "🛠 Admin panel",
+            f"🛠 <b>Admin panel</b>\n{format_now_html()}",
             reply_markup=admin_menu_keyboard(),
+            parse_mode="HTML",
         )
         return
 
     if action == "stats":
         stats = get_stats()
-        await query.edit_message_text(
-            "📊 Statistika:\n"
+        text = (
+            "📊 <b>Statistika</b>\n"
+            f"{format_now_html()}\n\n"
             f"👥 Foydalanuvchilar: {stats['total_users']}\n"
             f"📦 Jami buyurtmalar: {stats['total_orders']}\n"
-            f"🆕 Yangi buyurtmalar: {stats['new_orders']}\n"
-            f"🚚 Faol buyurtmalar: {stats['active_orders']}",
-            reply_markup=admin_menu_keyboard(),
+            f"🆕 Yangi: {stats['new_orders']}\n"
+            f"🚚 Faol: {stats['active_orders']}\n"
+            f"✅ Yetkazilgan: {stats['delivered_orders']}\n"
+            f"💰 Jami savdo: {stats['revenue_sum']:,} so'm\n"
+            f"📅 Bugun: {stats['today_orders']} ta — {stats['today_sum']:,} so'm"
+        )
+        await edit_or_reply(
+            query, text, reply_markup=admin_menu_keyboard(), parse_mode="HTML"
         )
         return
 
@@ -824,10 +1225,7 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     if action == "products":
-        await query.edit_message_text(
-            "🛍 Mahsulotlar boshqaruvi",
-            reply_markup=admin_products_keyboard(),
-        )
+        await show_admin_products_list(update, context)
         return
 
     if action == "new":
@@ -865,25 +1263,38 @@ async def show_admin_products_list(
     query = update.callback_query
     products = get_products(active_only=False)
     if not products:
-        await query.edit_message_text(
-            "Mahsulotlar yo'q. Yangi qo'shing.",
-            reply_markup=admin_products_keyboard(),
+        text = "🛍 Mahsulotlar yo'q.\nYangi qo'shing 👇"
+        markup = admin_products_keyboard()
+    else:
+        no_photo = 0
+        for p in products:
+            try:
+                if not p["image_file_id"]:
+                    no_photo += 1
+            except (KeyError, IndexError):
+                no_photo += 1
+        cats = {
+            (p["category_name"] or "Toifasiz")
+            for p in products
+        }
+        text = (
+            f"🛍 <b>Mahsulotlar spiskasi</b>\n"
+            f"📦 Jami: <b>{len(products)}</b> ta · "
+            f"📁 Toifa: <b>{len(cats)}</b> ta\n"
+            f"🖼 Rasmli: <b>{len(products) - no_photo}</b> · "
+            f"📷· Rasmsiz: <b>{no_photo}</b>\n\n"
+            f"<b>━━ 📁 TOIFA ━━</b> — toifani ochish\n"
+            f"　　✅🖼 mahsulot — tahrirlash / rasm"
         )
-        return
+        markup = admin_all_products_list_keyboard(products)
 
-    await query.edit_message_text(f"🛍 Jami {len(products)} ta mahsulot:")
-    for product in products:
-        status = "✅ Faol" if product["is_active"] else "🚫 Yashirin"
-        category = product["category_name"] or "—"
-        await query.message.reply_text(
-            f"#{product['id']} {product['name']}\n"
-            f"🗂 {category}\n"
-            f"💰 {product['price']:,} so'm\n"
-            f"📝 {product['description'] or '—'}\n"
-            f"Holat: {status}",
-            reply_markup=admin_product_item_keyboard(
-                product["id"], bool(product["is_active"])
-            ),
+    if query:
+        await query.edit_message_text(
+            text, reply_markup=markup, parse_mode="HTML"
+        )
+    elif update.message:
+        await update.message.reply_text(
+            text, reply_markup=markup, parse_mode="HTML"
         )
 
 
@@ -893,19 +1304,48 @@ async def show_admin_categories(
     query = update.callback_query
     categories = get_categories(active_only=False)
     if not categories:
-        await query.edit_message_text(
-            "Toifalar yo'q. Yangi qo'shing.",
-            reply_markup=admin_products_keyboard(),
+        text = "Toifalar yo'q. Yangi qo'shing."
+        markup = admin_products_keyboard()
+    else:
+        with_counts = [
+            (
+                category,
+                len(get_products(active_only=False, category_id=category["id"])),
+            )
+            for category in categories
+        ]
+        text = (
+            f"🗂 Toifalar ({len(categories)} ta)\n"
+            "Keraklisini tanlang:"
         )
+        markup = admin_categories_list_keyboard(with_counts)
+
+    if query:
+        await query.edit_message_text(text, reply_markup=markup)
+    elif update.message:
+        await update.message.reply_text(text, reply_markup=markup)
+
+
+async def show_admin_category_products(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, category_id: int
+) -> None:
+    query = update.callback_query
+    category = get_category(category_id)
+    if not category:
+        await query.answer("Toifa topilmadi.", show_alert=True)
         return
 
-    await query.edit_message_text(f"🗂 Jami {len(categories)} ta toifa:")
-    for category in categories:
-        count = len(get_products(active_only=False, category_id=category["id"]))
-        await query.message.reply_text(
-            f"#{category['id']} {category['name']}\nMahsulotlar: {count} ta",
-            reply_markup=admin_category_item_keyboard(category["id"]),
-        )
+    products = get_products(active_only=False, category_id=category_id)
+    text = (
+        f"🗂 <b>{category['name']}</b>\n"
+        f"Mahsulotlar: {len(products)} ta\n\n"
+        "Mahsulotni tanlang yoki yangisini qo'shing."
+    )
+    await query.edit_message_text(
+        text,
+        reply_markup=admin_category_products_list_keyboard(category_id, products),
+        parse_mode="HTML",
+    )
 
 
 async def admin_product_callback(
@@ -929,13 +1369,68 @@ async def admin_product_callback(
         await show_admin_categories(update, context)
         return None
 
-    if action == "addcat":
-        await query.edit_message_text("Yangi toifa qo'shish...")
-        await query.message.reply_text(
-            "🗂 Toifa nomini yozing:\nMasalan: Non mahsulotlari",
-            reply_markup=cancel_keyboard(),
+    if action == "viewcat":
+        category_id = int(parts[2])
+        await show_admin_category_products(update, context, category_id)
+        return None
+
+    if action == "item":
+        product_id = int(parts[2])
+        product = get_product_by_id(product_id)
+        if not product:
+            await query.answer("Mahsulot topilmadi.", show_alert=True)
+            return None
+        status = "✅ Faol" if product["is_active"] else "🚫 Yashirin"
+        category = product["category_name"] or "—"
+        cat_id = product["category_id"]
+        rows = admin_product_item_keyboard(
+            product["id"], bool(product["is_active"])
+        ).inline_keyboard
+        back_row = [
+            [
+                InlineKeyboardButton(
+                    "⬅️ Spiskaga",
+                    callback_data="admin_prod:list",
+                )
+            ]
+        ]
+        if cat_id:
+            back_row.append(
+                [
+                    InlineKeyboardButton(
+                        "⬅️ Toifaga",
+                        callback_data=f"admin_prod:viewcat:{cat_id}",
+                    )
+                ]
+            )
+        markup = InlineKeyboardMarkup(list(rows) + back_row)
+        await query.edit_message_text(
+            f"#{product['id']} <b>{product['name']}</b>\n"
+            f"🗂 {category}\n"
+            f"✨ {money_html(product['price'])} ✨\n"
+            f"📝 {product['description'] or '—'}\n"
+            f"Holat: {status}",
+            reply_markup=markup,
+            parse_mode="HTML",
         )
-        return ProductAdminState.CATEGORY_NAME
+        return None
+
+    if action == "addcat":
+        # ConversationHandler ga bog'liq emas — ishonchliroq
+        context.user_data["awaiting_admin"] = "category_name"
+        context.user_data.pop("admin_product", None)
+        await query.edit_message_text("🗂 Yangi toifa qo'shish")
+        await query.message.reply_text(
+            "🗂 Toifa nomini yozing.\n\n"
+            "💡 Oldiga emoji qo‘ying — ro‘yxatda chiroyli chiqadi:\n"
+            "• <code>🍎 Meva</code>\n"
+            "• <code>🍦 Muzqaymoqlar</code>\n"
+            "• <code>💄 Parfyumeriya</code>\n"
+            "• <code>✏️ Kantselyariya</code>",
+            reply_markup=cancel_keyboard(),
+            parse_mode="HTML",
+        )
+        return None
 
     if action == "delcat":
         category_id = int(parts[2])
@@ -944,8 +1439,28 @@ async def admin_product_callback(
             await query.answer("Toifa topilmadi.", show_alert=True)
             return None
         delete_category(category_id)
-        await query.edit_message_text(f"🗑 «{category['name']}» toifasi o'chirildi.")
+        await query.edit_message_text(
+            f"🗑 «{category['name']}» toifasi o'chirildi.",
+            reply_markup=admin_products_keyboard(),
+        )
         return None
+
+    if action == "addin":
+        # Toifa ichidan yangi mahsulot — toifa oldindan tanlangan
+        category_id = int(parts[2])
+        category = get_category(category_id)
+        if not category:
+            await query.answer("Toifa topilmadi.", show_alert=True)
+            return ConversationHandler.END
+        context.user_data["admin_product"] = {"category_id": category_id}
+        await query.edit_message_text(
+            f"➕ «{category['name']}» toifasiga yangi mahsulot"
+        )
+        await query.message.reply_text(
+            "🛍 Mahsulot nomini yozing:",
+            reply_markup=cancel_keyboard(),
+        )
+        return ProductAdminState.NAME
 
     if action == "add":
         context.user_data["admin_product"] = {}
@@ -1029,15 +1544,30 @@ async def admin_product_callback(
         product = get_product_by_id(product_id)
         status = "✅ Faol" if product["is_active"] else "🚫 Yashirin"
         category = product["category_name"] or "—"
+        cat_id = product["category_id"]
+        rows = admin_product_item_keyboard(
+            product["id"], bool(product["is_active"])
+        ).inline_keyboard
+        back_row = (
+            [
+                [
+                    InlineKeyboardButton(
+                        "⬅️ Toifaga",
+                        callback_data=f"admin_prod:viewcat:{cat_id}",
+                    )
+                ]
+            ]
+            if cat_id
+            else []
+        )
         await query.edit_message_text(
-            f"#{product['id']} {product['name']}\n"
+            f"#{product['id']} <b>{product['name']}</b>\n"
             f"🗂 {category}\n"
-            f"💰 {product['price']:,} so'm\n"
+            f"✨ {money_html(product['price'])} ✨\n"
             f"📝 {product['description'] or '—'}\n"
             f"Holat: {status}",
-            reply_markup=admin_product_item_keyboard(
-                product["id"], bool(product["is_active"])
-            ),
+            reply_markup=InlineKeyboardMarkup(list(rows) + back_row),
+            parse_mode="HTML",
         )
         return None
 
@@ -1047,8 +1577,14 @@ async def admin_product_callback(
         if not product:
             await query.answer("Mahsulot topilmadi.", show_alert=True)
             return None
+        cat_id = product["category_id"]
+        name = product["name"]
         delete_product(product_id)
-        await query.edit_message_text(f"🗑 «{product['name']}» o'chirildi.")
+        if cat_id:
+            await query.answer(f"«{name}» o'chirildi")
+            await show_admin_category_products(update, context, cat_id)
+        else:
+            await query.edit_message_text(f"🗑 «{name}» o'chirildi.")
         return None
 
     return None
@@ -1062,6 +1598,17 @@ async def admin_product_name(
         return await cancel_product_admin(update, context)
 
     context.user_data.setdefault("admin_product", {})["name"] = text
+    # Toifa ichidan qo'shilayotgan bo'lsa — toifa tanlashni o'tkazib yuborish
+    preset_cat = context.user_data["admin_product"].get("category_id")
+    if preset_cat:
+        category = get_category(preset_cat)
+        await update.message.reply_text(
+            f"🗂 Toifa: {category['name'] if category else preset_cat}\n"
+            "💰 Narxni yozing (faqat raqam, so'm):",
+            reply_markup=cancel_keyboard(),
+        )
+        return ProductAdminState.PRICE
+
     categories = get_categories()
     if not categories:
         await update.message.reply_text(
@@ -1078,20 +1625,43 @@ async def admin_product_name(
     return ProductAdminState.PICK_CATEGORY
 
 
+def _is_skip_text(text: str) -> bool:
+    """«O'tkazib yuborish» tugmasi / matnini aniqlash (emoji variantlari bilan)."""
+    normalized = (text or "").strip().casefold()
+    return (
+        "tkazib yuborish" in normalized
+        or normalized in {"-", "skip", "o'tkazib", "otkazib"}
+    )
+
+
+def _is_cancel_text(text: str) -> bool:
+    normalized = (text or "").strip().casefold()
+    return normalized.startswith("❌") or "bekor" in normalized
+
+
 async def admin_product_price(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
     raw = update.message.text or ""
-    if raw.strip() == "❌ Bekor qilish":
+    if _is_cancel_text(raw):
         return await cancel_product_admin(update, context)
 
-    text = raw.strip().replace(" ", "").replace(",", "")
-    if not text.isdigit() or int(text) <= 0:
-        await update.message.reply_text("To'g'ri narx yozing. Masalan: 12000")
+    price = parse_price_sum(raw)
+    if price is None:
+        await update.message.reply_text(
+            "Narxni shunday yozing:\n"
+            "• <code>12000</code>\n"
+            "• yoki <code>15000 so'm</code>\n"
+            "• yoki <code>15 000</code>",
+            parse_mode="HTML",
+        )
         return ProductAdminState.PRICE
 
-    context.user_data["admin_product"]["price"] = int(text)
+    context.user_data.setdefault("admin_product", {})["price"] = price
+    # Conversation uzilsa ham izoh bosqichi ishlasin
+    context.user_data["awaiting_admin"] = "product_description"
     await update.message.reply_text(
+        f"✅ Narx: {price:,} so'm\n\n"
         "📝 Izoh yozing yoki «O'tkazib yuborish» ni bosing:",
         reply_markup=ReplyKeyboardMarkup(
             [["⏭ O'tkazib yuborish"], ["❌ Bekor qilish"]],
@@ -1105,29 +1675,61 @@ async def admin_product_description(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
     text = (update.message.text or "").strip()
-    if text == "❌ Bekor qilish":
+    if _is_cancel_text(text):
         return await cancel_product_admin(update, context)
 
-    description = "" if text in {"⏭ O'tkazib yuborish", "O'tkazib yuborish"} else text
-    data = context.user_data.get("admin_product", {})
-    product_id = create_product(
-        data["name"],
-        data["price"],
-        description,
-        data.get("category_id"),
-    )
+    description = "" if _is_skip_text(text) else text
+    data = context.user_data.get("admin_product") or {}
+    if not data.get("name") or data.get("price") is None:
+        context.user_data.pop("awaiting_admin", None)
+        await update.message.reply_text(
+            "⚠️ Ma'lumot yo'qaldi. Mahsulotni qaytadan qo'shing.",
+            reply_markup=main_menu_keyboard(is_admin(update.effective_user.id)),
+        )
+        return ConversationHandler.END
+
+    try:
+        product_id = create_product(
+            data["name"],
+            int(data["price"]),
+            description,
+            data.get("category_id"),
+        )
+    except Exception as exc:
+        context.user_data["awaiting_admin"] = "product_description"
+        await update.message.reply_text(
+            f"❌ Mahsulot saqlanmadi: {exc}\nQayta urinib ko'ring yoki izoh yozing:"
+        )
+        return ProductAdminState.DESCRIPTION
+
     category = get_category(data["category_id"]) if data.get("category_id") else None
     context.user_data.pop("admin_product", None)
+    context.user_data.pop("awaiting_admin", None)
 
     await update.message.reply_text(
         f"✅ Mahsulot qo'shildi!\n"
         f"#{product_id} {data['name']} — {data['price']:,} so'm\n"
-        f"🗂 {category['name'] if category else '—'}",
+        f"🗂 {category['name'] if category else '—'}\n\n"
+        f"🖼 Endi rasm qo‘shing — mijozlar ko‘proq sotib oladi!",
         reply_markup=main_menu_keyboard(is_admin(update.effective_user.id)),
     )
     await update.message.reply_text(
-        "🛍 Mahsulotlar boshqaruvi",
-        reply_markup=admin_products_keyboard(),
+        "Rasm qo‘shish yoki spiskaga qaytish:",
+        reply_markup=InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        "🖼 Rasm qo‘shish",
+                        callback_data=f"admin_prod:photo:{product_id}",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "📋 Spiska", callback_data="admin_prod:list"
+                    )
+                ],
+            ]
+        ),
     )
     return ConversationHandler.END
 
@@ -1136,30 +1738,59 @@ async def admin_category_name(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
     text = (update.message.text or "").strip()
+    context.user_data.pop("awaiting_admin", None)
+
     if text == "❌ Bekor qilish":
         return await cancel_product_admin(update, context)
 
     if len(text) < 2:
+        context.user_data["awaiting_admin"] = "category_name"
         await update.message.reply_text("Toifa nomi juda qisqa. Qayta yozing:")
         return ProductAdminState.CATEGORY_NAME
 
     try:
         category_id = create_category(text)
-    except Exception:
+    except Exception as exc:
+        context.user_data["awaiting_admin"] = "category_name"
         await update.message.reply_text(
-            "Bu toifa allaqachon bor yoki xato. Boshqa nom yozing:"
+            f"❌ Toifa qo'shilmadi: {exc}\nBoshqa nom yozing:"
         )
         return ProductAdminState.CATEGORY_NAME
 
     await update.message.reply_text(
-        f"✅ Toifa qo'shildi!\n#{category_id} {text}",
+        f"✅ Toifa qo'shildi!\n#{category_id} · {text}",
         reply_markup=main_menu_keyboard(is_admin(update.effective_user.id)),
     )
-    await update.message.reply_text(
-        "🛍 Mahsulotlar boshqaruvi",
-        reply_markup=admin_products_keyboard(),
-    )
+    await show_admin_categories(update, context)
     return ConversationHandler.END
+
+
+async def admin_awaiting_text(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """ConversationHandler ishlamasa ham admin matnini qabul qilish."""
+    from telegram.ext import ApplicationHandlerStop
+
+    if not update.message or not is_admin(update.effective_user.id):
+        return
+
+    mode = context.user_data.get("awaiting_admin")
+    text = update.message.text or ""
+    draft = context.user_data.get("admin_product") or {}
+    has_product_draft = bool(draft.get("name") and draft.get("price") is not None)
+
+    # Stuck recovery: izoh bosqichida conversation uzilgan bo'lsa
+    if mode not in {"category_name", "product_description"}:
+        if has_product_draft and (_is_skip_text(text) or _is_cancel_text(text)):
+            mode = "product_description"
+        else:
+            return
+
+    if mode == "category_name":
+        await admin_category_name(update, context)
+    else:
+        await admin_product_description(update, context)
+    raise ApplicationHandlerStop
 
 
 async def admin_size_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1180,9 +1811,9 @@ async def admin_size_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if raw.strip() == "❌ Bekor qilish":
         return await cancel_product_admin(update, context)
 
-    text = raw.strip().replace(" ", "").replace(",", "")
-    if not text.isdigit() or int(text) <= 0:
-        await update.message.reply_text("To'g'ri narx yozing. Masalan: 9000")
+    price = parse_price_sum(raw)
+    if price is None:
+        await update.message.reply_text("Narxni yozing. Masalan: 9000 yoki 9000 so'm")
         return ProductAdminState.SIZE_PRICE
 
     data = context.user_data.get("admin_product", {})
@@ -1192,25 +1823,26 @@ async def admin_size_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await update.message.reply_text("Xatolik. Qaytadan urinib ko'ring.")
         return ConversationHandler.END
 
-    create_variant(product_id, size_name, int(text))
+    create_variant(product_id, size_name, price)
     product_name = data.get("product_name", "Mahsulot")
     context.user_data.pop("admin_product", None)
 
     await update.message.reply_text(
         f"✅ O'lcham qo'shildi!\n"
-        f"{product_name} — {size_name}: {int(text):,} so'm",
+        f"{product_name} — {size_name}: {price:,} so'm",
         reply_markup=main_menu_keyboard(is_admin(update.effective_user.id)),
     )
     return ConversationHandler.END
 
 
 async def admin_edit_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    text = (update.message.text or "").strip().replace(" ", "").replace(",", "")
-    if update.message.text == "❌ Bekor qilish":
+    raw = update.message.text or ""
+    if raw.strip() == "❌ Bekor qilish":
         return await cancel_product_admin(update, context)
 
-    if not text.isdigit() or int(text) <= 0:
-        await update.message.reply_text("To'g'ri narx yozing. Masalan: 15000")
+    price = parse_price_sum(raw)
+    if price is None:
+        await update.message.reply_text("Narxni yozing. Masalan: 15000 yoki 15000 so'm")
         return ProductAdminState.EDIT_PRICE
 
     product_id = context.user_data.get("admin_product", {}).get("id")
@@ -1218,7 +1850,7 @@ async def admin_edit_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await update.message.reply_text("Xatolik. Qaytadan urinib ko'ring.")
         return ConversationHandler.END
 
-    update_product_price(product_id, int(text))
+    update_product_price(product_id, price)
     product = get_product_by_id(product_id)
     context.user_data.pop("admin_product", None)
 
@@ -1234,6 +1866,7 @@ async def cancel_product_admin(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
     context.user_data.pop("admin_product", None)
+    context.user_data.pop("awaiting_admin", None)
     await update.message.reply_text(
         "Bekor qilindi.",
         reply_markup=main_menu_keyboard(is_admin(update.effective_user.id)),
@@ -1256,7 +1889,10 @@ async def admin_status_callback(
     update_order_status(order_id, status)
 
     order = get_order(order_id)
-    await query.edit_message_text(format_order(order))
+    await query.edit_message_text(
+        format_order(order),
+        reply_markup=admin_order_keyboard(order_id),
+    )
 
     try:
         text = (
@@ -1274,6 +1910,53 @@ async def admin_status_callback(
         )
     except Exception:
         pass
+
+
+async def admin_delete_order_callback(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    query = update.callback_query
+    await query.answer()
+
+    if not is_admin(query.from_user.id):
+        await query.edit_message_text("Ruxsat yo'q.")
+        return
+
+    data = query.data
+    if data.startswith("admin_del_order_yes:"):
+        order_id = int(data.split(":")[1])
+        if delete_order(order_id):
+            await query.edit_message_text(
+                f"🗑 Buyurtma #{order_id} ma'lumotlari o'chirildi."
+            )
+        else:
+            await query.edit_message_text("Buyurtma topilmadi yoki allaqachon o'chirilgan.")
+        return
+
+    if data.startswith("admin_del_order_no:"):
+        order_id = int(data.split(":")[1])
+        order = get_order(order_id)
+        if not order:
+            await query.edit_message_text("Buyurtma topilmadi.")
+            return
+        await query.edit_message_text(
+            format_order(order),
+            reply_markup=admin_order_keyboard(order_id),
+        )
+        return
+
+    # admin_del_order:{id} — tasdiq
+    order_id = int(data.split(":")[1])
+    order = get_order(order_id)
+    if not order:
+        await query.edit_message_text("Buyurtma topilmadi.")
+        return
+    await query.edit_message_text(
+        f"⚠️ Buyurtma #{order_id} ni o'chirasizmi?\n"
+        f"Bu amalni qaytarib bo'lmaydi.\n\n"
+        f"{format_order(order)}",
+        reply_markup=admin_delete_order_confirm_keyboard(order_id),
+    )
 
 
 async def payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1487,7 +2170,7 @@ def build_product_admin_conversation() -> ConversationHandler:
         entry_points=[
             CallbackQueryHandler(
                 admin_product_callback,
-                pattern=r"^admin_prod:(add|addcat|price:\d+|size:\d+|setcat:\d+)$",
+                pattern=r"^admin_prod:(add|addin:\d+|price:\d+|size:\d+|setcat:\d+)$",
             ),
         ],
         states={

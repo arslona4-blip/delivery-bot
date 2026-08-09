@@ -21,10 +21,13 @@ from bot.extras import (
     show_favorites,
 )
 from bot.handlers import (
+    admin_awaiting_text,
     admin_callback,
+    admin_delete_order_callback,
     admin_panel,
     admin_product_callback,
     admin_status_callback,
+    back_to_main_menu,
     build_order_conversation,
     build_product_admin_conversation,
     cart_callback,
@@ -34,11 +37,14 @@ from bot.handlers import (
     payment_callback,
     precheckout_callback,
     product_callback,
+    share_invite,
     show_cart_message,
     show_catalog,
+    show_more_menu,
     start,
     successful_payment,
 )
+from bot.webapp import set_bot, start_webapp_server
 
 
 def _start_health_server() -> None:
@@ -65,6 +71,27 @@ def _start_health_server() -> None:
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
 
+def _acquire_single_instance_lock() -> None:
+    """Bir vaqtda faqat bitta bot ishlasin (409 Conflict oldini olish)."""
+    import socket
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        # Lokal port band bo'lsa — boshqa bot allaqachon ishlayapti
+        sock.bind(("127.0.0.1", 47291))
+    except OSError as exc:
+        sock.close()
+        raise SystemExit(
+            "Bot allaqachon ishlamoqda. Avval eski jarayonni to'xtating."
+        ) from exc
+
+    global _BOT_LOCK_FILE  # noqa: PLW0603
+    _BOT_LOCK_FILE = sock  # referens saqlanadi, port bo'shamaydi
+
+
+_BOT_LOCK_FILE = None
+
+
 def main() -> None:
     logging.basicConfig(
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -74,10 +101,21 @@ def main() -> None:
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN .env faylida ko'rsatilmagan.")
 
+    _acquire_single_instance_lock()
     _start_health_server()
+    start_webapp_server()
     init_db()
 
-    app = Application.builder().token(BOT_TOKEN).build()
+    async def post_init(application: Application) -> None:
+        set_bot(application.bot)
+
+    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
+
+    # Toifa nomi kiritish — conversation dan mustaqil
+    app.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, admin_awaiting_text),
+        group=-1,
+    )
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
@@ -88,8 +126,11 @@ def main() -> None:
 
     app.add_handler(MessageHandler(filters.Regex("^🛍 Katalog$"), show_catalog))
     app.add_handler(MessageHandler(filters.Regex("^🛒 Savatcha$"), show_cart_message))
+    app.add_handler(MessageHandler(filters.Regex("^⋯ Ko'proq$"), show_more_menu))
+    app.add_handler(MessageHandler(filters.Regex("^⬅️ Asosiy menyu$"), back_to_main_menu))
     app.add_handler(MessageHandler(filters.Regex("^⭐ Sevimlilar$"), show_favorites))
     app.add_handler(MessageHandler(filters.Regex("^🎁 Bonus$"), show_bonus))
+    app.add_handler(MessageHandler(filters.Regex("^👥 Ulashish$"), share_invite))
     app.add_handler(MessageHandler(filters.Regex("^📋 Mening buyurtmalarim$"), my_orders))
     app.add_handler(MessageHandler(filters.Regex("^ℹ️ Yordam$"), help_command))
     app.add_handler(MessageHandler(filters.Regex("^📞 Aloqa$"), contact_info))
@@ -105,10 +146,13 @@ def main() -> None:
     app.add_handler(
         CallbackQueryHandler(
             admin_product_callback,
-            pattern=r"^admin_prod:(list|cats|toggle:\d+|del:\d+|delcat:\d+|delsize:\d+)$",
+            pattern=r"^admin_prod:(list|cats|viewcat:\d+|item:\d+|toggle:\d+|del:\d+|delcat:\d+|delsize:\d+|addcat)$",
         )
     )
     app.add_handler(CallbackQueryHandler(admin_status_callback, pattern=r"^admin_status:"))
+    app.add_handler(
+        CallbackQueryHandler(admin_delete_order_callback, pattern=r"^admin_del_order")
+    )
     app.add_handler(CallbackQueryHandler(payment_callback, pattern=r"^pay"))
     app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
