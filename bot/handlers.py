@@ -1405,6 +1405,12 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await show_admin_products_list(update, context)
         return
 
+    if action == "contacts":
+        from bot.contacts import contacts_home
+
+        await contacts_home(update, context)
+        return
+
     if action == "new":
         orders = get_orders_by_status("new")
     elif action == "active":
@@ -2286,6 +2292,44 @@ async def payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 await context.bot.send_message(
                     admin_id,
                     f"💵 Buyurtma #{order_id}: mijoz naqd to'lashni tanladi.",
+                )
+            except Exception:
+                pass
+        return
+
+    if data.startswith("pay_debt:"):
+        order_id = int(data.split(":")[1])
+        order = get_order(order_id)
+        if not order:
+            await query.edit_message_text("Buyurtma topilmadi.")
+            return
+        from bot.database import get_contact, mark_order_as_debt
+
+        try:
+            cid, bal = mark_order_as_debt(
+                order_id, created_by=query.from_user.id
+            )
+        except ValueError as exc:
+            await query.answer(str(exc), show_alert=True)
+            return
+        contact = get_contact(cid)
+        name = contact["name"] if contact else f"#{cid}"
+        await query.edit_message_text(
+            f"📒 Buyurtma #{order_id} qarzga yozildi.\n"
+            f"Kontakt: {name}\n"
+            f"Summa: {order['price']:,} so'm\n"
+            f"Jami qarz: {bal:,} so'm\n\n"
+            "Admin panel → Kontaktlar dan to'lovni yozishingiz mumkin."
+        )
+        for admin_id in ADMIN_IDS:
+            try:
+                await context.bot.send_message(
+                    admin_id,
+                    f"📒 Qarz\nBuyurtma #{order_id}\n"
+                    f"Mijoz: {query.from_user.full_name}\n"
+                    f"Kontakt: {name}\n"
+                    f"Summa: {order['price']:,} so'm\n"
+                    f"Jami qarz: {bal:,} so'm",
                 )
             except Exception:
                 pass

@@ -375,6 +375,12 @@ def payment_keyboard(order_id: int) -> InlineKeyboardMarkup:
                 callback_data=f"pay_card:{order_id}",
             )
         ],
+        [
+            InlineKeyboardButton(
+                "📒 Qarzga",
+                callback_data=f"pay_debt:{order_id}",
+            )
+        ],
     ]
     if PAYME_LINK:
         rows.append([InlineKeyboardButton("🟢 Payme", url=PAYME_LINK)])
@@ -439,7 +445,13 @@ def admin_payment_keyboard(order_id: int) -> InlineKeyboardMarkup:
                     "❌ Rad etish",
                     callback_data=f"pay_reject:{order_id}",
                 ),
-            ]
+            ],
+            [
+                InlineKeyboardButton(
+                    "📒 Qarzga yozish",
+                    callback_data=f"pay_debt:{order_id}",
+                )
+            ],
         ]
     )
 
@@ -461,6 +473,14 @@ def admin_menu_keyboard() -> InlineKeyboardMarkup:
                 )
             ],
             [InlineKeyboardButton("🛍 Mahsulotlar", callback_data="admin:products")],
+            [
+                InlineKeyboardButton(
+                    "👥 Kontaktlar", callback_data="admin:contacts"
+                ),
+                InlineKeyboardButton(
+                    "📒 Qarzdorlar", callback_data="contact:debtors"
+                ),
+            ],
             [InlineKeyboardButton("📊 Statistika", callback_data="admin:stats")],
             [InlineKeyboardButton("📈 Kunlik hisobot", callback_data="admin:report")],
             [InlineKeyboardButton("📣 Broadcast", callback_data="admin:broadcast")],
@@ -801,6 +821,14 @@ def admin_order_keyboard(order_id: int) -> InlineKeyboardMarkup:
         )
 
     rows = [buttons[i : i + 2] for i in range(0, len(buttons), 2)]
+    rows.append(
+        [
+            InlineKeyboardButton(
+                "📒 Qarzga yozish",
+                callback_data=f"pay_debt:{order_id}",
+            )
+        ]
+    )
     rows.append(
         [
             InlineKeyboardButton(

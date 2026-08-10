@@ -238,7 +238,35 @@ def _migrate_features(conn: sqlite3.Connection) -> None:
             created_at TEXT NOT NULL,
             rewarded INTEGER NOT NULL DEFAULT 0
         );
+
+        CREATE TABLE IF NOT EXISTS contacts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            phone TEXT,
+            note TEXT,
+            telegram_user_id INTEGER,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS debt_ledger (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            contact_id INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            amount INTEGER NOT NULL,
+            order_id INTEGER,
+            note TEXT,
+            created_by INTEGER,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (contact_id) REFERENCES contacts (id)
+        );
         """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_contacts_phone ON contacts(phone)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_debt_contact ON debt_ledger(contact_id)"
     )
     promo_count = conn.execute("SELECT COUNT(*) FROM promo_codes").fetchone()[0]
     if promo_count == 0:
@@ -1279,3 +1307,243 @@ def get_courier_orders() -> list[sqlite3.Row]:
         *get_orders_by_status("accepted"),
         *get_orders_by_status("in_delivery"),
     ]
+
+
+# --- Contacts & debts ---
+def create_contact(
+    name: str,
+    phone: str | None = None,
+    note: str = "",
+    telegram_user_id: int | None = None,
+) -> int:
+    now = _now_iso()
+    with get_connection() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO contacts (name, phone, note, telegram_user_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                name.strip(),
+                (phone or "").strip() or None,
+                (note or "").strip(),
+                telegram_user_id,
+                now,
+                now,
+            ),
+        )
+        return int(cur.lastrowid)
+
+
+def update_contact(
+    contact_id: int,
+    *,
+    name: str | None = None,
+    phone: str | None = None,
+    note: str | None = None,
+) -> None:
+    contact = get_contact(contact_id)
+    if not contact:
+        return
+    with get_connection() as conn:
+        conn.execute(
+            """
+            UPDATE contacts
+            SET name = ?, phone = ?, note = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                name if name is not None else contact["name"],
+                phone if phone is not None else contact["phone"],
+                note if note is not None else contact["note"],
+                _now_iso(),
+                contact_id,
+            ),
+        )
+
+
+def get_contact(contact_id: int) -> sqlite3.Row | None:
+    with get_connection() as conn:
+        return conn.execute(
+            "SELECT * FROM contacts WHERE id = ?", (contact_id,)
+        ).fetchone()
+
+
+def find_contact_by_phone(phone: str) -> sqlite3.Row | None:
+    digits = "".join(ch for ch in (phone or "") if ch.isdigit())
+    if len(digits) < 9:
+        return None
+    tail = digits[-9:]
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM contacts WHERE phone IS NOT NULL"
+        ).fetchall()
+    for row in rows:
+        p = "".join(ch for ch in (row["phone"] or "") if ch.isdigit())
+        if p.endswith(tail):
+            return row
+    return None
+
+
+def find_or_create_contact_for_order(order: sqlite3.Row) -> int:
+    phone = (order["phone"] or "").strip()
+    existing = find_contact_by_phone(phone) if phone else None
+    if existing:
+        if order["user_id"] and not existing["telegram_user_id"]:
+            with get_connection() as conn:
+                conn.execute(
+                    """
+                    UPDATE contacts
+                    SET telegram_user_id = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (order["user_id"], _now_iso(), existing["id"]),
+                )
+        return int(existing["id"])
+    user = get_user(order["user_id"]) if order["user_id"] else None
+    name = (user["full_name"] if user else None) or f"Mijoz #{order['user_id']}"
+    return create_contact(
+        name=name,
+        phone=phone or None,
+        note=f"Buyurtma #{order['id']}",
+        telegram_user_id=order["user_id"],
+    )
+
+
+def list_contacts(*, debtors_only: bool = False) -> list[dict]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT c.*,
+                   COALESCE((
+                     SELECT SUM(
+                       CASE WHEN kind='debt' THEN amount ELSE -amount END
+                     )
+                     FROM debt_ledger d WHERE d.contact_id = c.id
+                   ), 0) AS balance
+            FROM contacts c
+            ORDER BY c.name COLLATE NOCASE
+            """
+        ).fetchall()
+    result = []
+    for row in rows:
+        item = {k: row[k] for k in row.keys()}
+        bal = int(item.get("balance") or 0)
+        item["balance"] = bal
+        if debtors_only and bal <= 0:
+            continue
+        result.append(item)
+    if debtors_only:
+        result.sort(key=lambda x: -x["balance"])
+    return result
+
+
+def get_contact_balance(contact_id: int) -> int:
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT COALESCE(
+              SUM(CASE WHEN kind='debt' THEN amount ELSE -amount END), 0
+            )
+            FROM debt_ledger WHERE contact_id = ?
+            """,
+            (contact_id,),
+        ).fetchone()
+    return int(row[0] if row else 0)
+
+
+def add_debt_entry(
+    contact_id: int,
+    amount: int,
+    *,
+    kind: str = "debt",
+    order_id: int | None = None,
+    note: str = "",
+    created_by: int | None = None,
+) -> int:
+    if amount <= 0:
+        raise ValueError("Summa 0 dan katta bo'lsin")
+    if kind not in {"debt", "payment"}:
+        raise ValueError("kind noto'g'ri")
+    with get_connection() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO debt_ledger
+                (contact_id, kind, amount, order_id, note, created_by, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                contact_id,
+                kind,
+                int(amount),
+                order_id,
+                (note or "").strip(),
+                created_by,
+                _now_iso(),
+            ),
+        )
+        return int(cur.lastrowid)
+
+
+def list_debt_ledger(contact_id: int, limit: int = 20) -> list[sqlite3.Row]:
+    with get_connection() as conn:
+        return list(
+            conn.execute(
+                """
+                SELECT * FROM debt_ledger
+                WHERE contact_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (contact_id, limit),
+            ).fetchall()
+        )
+
+
+def debt_totals() -> dict[str, int]:
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT
+              COALESCE(SUM(CASE WHEN kind='debt' THEN amount ELSE 0 END), 0)
+                AS debts,
+              COALESCE(SUM(CASE WHEN kind='payment' THEN amount ELSE 0 END), 0)
+                AS payments
+            FROM debt_ledger
+            """
+        ).fetchone()
+    debts = int(row["debts"])
+    payments = int(row["payments"])
+    return {"debts": debts, "payments": payments, "open": max(0, debts - payments)}
+
+
+def mark_order_as_debt(
+    order_id: int,
+    *,
+    created_by: int | None = None,
+    contact_id: int | None = None,
+) -> tuple[int, int]:
+    """Buyurtmani qarzga yozadi. Qaytaradi: (contact_id, balance)."""
+    order = get_order(order_id)
+    if not order:
+        raise ValueError("Buyurtma topilmadi")
+    cid = contact_id or find_or_create_contact_for_order(order)
+    with get_connection() as conn:
+        exists = conn.execute(
+            """
+            SELECT id FROM debt_ledger
+            WHERE order_id = ? AND kind = 'debt'
+            """,
+            (order_id,),
+        ).fetchone()
+    if not exists:
+        add_debt_entry(
+            cid,
+            int(order["price"]),
+            kind="debt",
+            order_id=order_id,
+            note=f"Buyurtma #{order_id}",
+            created_by=created_by,
+        )
+    update_payment_status(order_id, "debt")
+    return cid, get_contact_balance(cid)

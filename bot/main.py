@@ -10,6 +10,7 @@ from telegram.ext import (
 )
 
 from bot.config import BOT_TOKEN
+from bot.contacts import build_contact_conversations, contact_callback
 from bot.database import init_db
 from bot.extras import (
     build_extra_conversations,
@@ -105,6 +106,8 @@ def main() -> None:
     app.add_handler(build_product_admin_conversation())
     for conv in build_extra_conversations():
         app.add_handler(conv)
+    for conv in build_contact_conversations():
+        app.add_handler(conv)
 
     app.add_handler(MessageHandler(filters.Regex("^🛍 Katalog$"), show_catalog))
     app.add_handler(MessageHandler(filters.Regex("^🛒 Savatcha$"), show_cart_message))
@@ -124,6 +127,12 @@ def main() -> None:
     app.add_handler(CallbackQueryHandler(fav_callback, pattern=r"^fav:\d+$"))
     app.add_handler(CallbackQueryHandler(reorder_callback, pattern=r"^reorder:\d+$"))
     app.add_handler(CallbackQueryHandler(cancel_order_callback, pattern=r"^cancel_order:\d+$"))
+    app.add_handler(
+        CallbackQueryHandler(
+            contact_callback,
+            pattern=r"^contact:(home|list|debtors|view:\d+|hist:\d+)$",
+        )
+    )
     app.add_handler(CallbackQueryHandler(admin_callback, pattern=r"^admin:"))
     app.add_handler(
         CallbackQueryHandler(
