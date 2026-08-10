@@ -18,6 +18,7 @@ from telegram.ext import (
     filters,
 )
 
+from bot.barcode_lookup import lookup_barcode_name
 from bot.config import (
     ADMIN_IDS,
     BONUS_PERCENT,
@@ -114,7 +115,9 @@ from bot.keyboards import (
     payment_keyboard,
     product_keyboard,
     promo_keyboard,
+    new_product_barcode_keyboard,
     scan_sale_keyboard,
+    suggested_name_keyboard,
 )
 from bot.timeutil import format_now_html, get_delivery_slots, money_html
 
@@ -138,6 +141,7 @@ class ProductAdminState(IntEnum):
     PICK_CATEGORY = 6
     SIZE_NAME = 7
     SIZE_PRICE = 8
+    BARCODE = 9
 
 
 def is_admin(user_id: int) -> bool:
@@ -1558,7 +1562,7 @@ async def admin_product_callback(
         return None
 
     if action == "addin":
-        # Toifa ichidan yangi mahsulot — toifa oldindan tanlangan
+        # Toifa ichidan yangi mahsulot — avval skaner / kod
         category_id = int(parts[2])
         category = get_category(category_id)
         if not category:
@@ -1569,19 +1573,25 @@ async def admin_product_callback(
             f"➕ «{category['name']}» toifasiga yangi mahsulot"
         )
         await query.message.reply_text(
-            "🛍 Mahsulot nomini yozing:",
-            reply_markup=cancel_keyboard(),
+            "Avval shtrix-kodni skanerlang.\n\n"
+            "1) «📷 Kodni skanerlash» — kamera\n"
+            "2) yoki kodni qo‘lda yozing\n"
+            "3) kod bo‘lmasa «⏭ O'tkazib yuborish»",
+            reply_markup=new_product_barcode_keyboard(),
         )
-        return ProductAdminState.NAME
+        return ProductAdminState.BARCODE
 
     if action == "add":
         context.user_data["admin_product"] = {}
         await query.edit_message_text("Yangi mahsulot qo'shish...")
         await query.message.reply_text(
-            "🛍 Mahsulot nomini yozing:",
-            reply_markup=cancel_keyboard(),
+            "Avval shtrix-kodni skanerlang.\n\n"
+            "1) «📷 Kodni skanerlash» — kamera\n"
+            "2) yoki kodni qo‘lda yozing\n"
+            "3) kod bo‘lmasa «⏭ O'tkazib yuborish»",
+            reply_markup=new_product_barcode_keyboard(),
         )
-        return ProductAdminState.NAME
+        return ProductAdminState.BARCODE
 
     if action == "setcat":
         category_id = int(parts[2])
@@ -1702,14 +1712,114 @@ async def admin_product_callback(
     return None
 
 
+def _barcode_payload_code(payload: dict) -> str:
+    action = payload.get("action") or "scan"
+    if action == "scan_many":
+        codes = [
+            str(x).strip() for x in (payload.get("barcodes") or []) if str(x).strip()
+        ]
+        return codes[0] if codes else ""
+    return str(payload.get("barcode") or "").strip()
+
+
+async def _ask_new_product_name(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    msg = update.effective_message
+    data = context.user_data.setdefault("admin_product", {})
+    suggested = data.get("suggested_name")
+    if suggested:
+        await msg.reply_text(
+            f"Nom topildi: <b>{suggested}</b>\nQabul qilasizmi yoki boshqa nom yozasizmi?",
+            parse_mode="HTML",
+            reply_markup=suggested_name_keyboard(suggested),
+        )
+    else:
+        await msg.reply_text(
+            "🛍 Mahsulot nomini yozing:",
+            reply_markup=cancel_keyboard(),
+        )
+    return ProductAdminState.NAME
+
+
+async def _apply_new_product_barcode(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, barcode: str | None
+) -> int:
+    msg = update.effective_message
+    data = context.user_data.setdefault("admin_product", {})
+    if barcode:
+        existing = get_product_by_barcode(barcode)
+        if existing:
+            await msg.reply_text(
+                f"❌ Bu kod allaqachon bor: #{existing['id']} {existing['name']}\n"
+                "Boshqa kod skanerlang yoki «⏭ O'tkazib yuborish».",
+                reply_markup=new_product_barcode_keyboard(),
+            )
+            return ProductAdminState.BARCODE
+        data["barcode"] = barcode
+        info = lookup_barcode_name(barcode)
+        if info and info.get("name"):
+            data["suggested_name"] = info["name"]
+        await msg.reply_text(f"✅ Kod: `{barcode}`", parse_mode="Markdown")
+    else:
+        data.pop("barcode", None)
+        data.pop("suggested_name", None)
+    return await _ask_new_product_name(update, context)
+
+
+async def admin_product_barcode(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    text = (update.message.text or "").strip()
+    if _is_cancel_text(text):
+        return await cancel_product_admin(update, context)
+    if _is_skip_text(text):
+        return await _apply_new_product_barcode(update, context, None)
+    return await _apply_new_product_barcode(update, context, text)
+
+
+async def admin_product_barcode_webapp(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    msg = update.effective_message
+    if not msg or not msg.web_app_data:
+        return ProductAdminState.BARCODE
+    try:
+        payload = json.loads(msg.web_app_data.data)
+    except json.JSONDecodeError:
+        await msg.reply_text(
+            "Skaner o‘qimadi. Qayta urinib ko‘ring.",
+            reply_markup=new_product_barcode_keyboard(),
+        )
+        return ProductAdminState.BARCODE
+    code = _barcode_payload_code(payload)
+    if not code:
+        await msg.reply_text(
+            "Kod bo‘sh. Qayta skanerlang.",
+            reply_markup=new_product_barcode_keyboard(),
+        )
+        return ProductAdminState.BARCODE
+    return await _apply_new_product_barcode(update, context, code)
+
+
 async def admin_product_name(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
     text = (update.message.text or "").strip()
     if text == "❌ Bekor qilish":
         return await cancel_product_admin(update, context)
+    if text == "✏️ Boshqa nom yozaman":
+        await update.message.reply_text(
+            "🛍 Mahsulot nomini yozing:",
+            reply_markup=cancel_keyboard(),
+        )
+        return ProductAdminState.NAME
+    if text.startswith("✅ "):
+        suggested = (context.user_data.get("admin_product") or {}).get("suggested_name")
+        text = suggested or text[2:].strip()
 
     context.user_data.setdefault("admin_product", {})["name"] = text
+    context.user_data["admin_product"].pop("suggested_name", None)
     # Toifa ichidan qo'shilayotgan bo'lsa — toifa tanlashni o'tkazib yuborish
     preset_cat = context.user_data["admin_product"].get("category_id")
     if preset_cat:
@@ -1806,6 +1916,7 @@ async def admin_product_description(
             int(data["price"]),
             description,
             data.get("category_id"),
+            barcode=data.get("barcode"),
         )
     except Exception as exc:
         context.user_data["awaiting_admin"] = "product_description"
@@ -1817,11 +1928,13 @@ async def admin_product_description(
     category = get_category(data["category_id"]) if data.get("category_id") else None
     context.user_data.pop("admin_product", None)
     context.user_data.pop("awaiting_admin", None)
+    code = data.get("barcode") or "—"
 
     await update.message.reply_text(
         f"✅ Mahsulot qo'shildi!\n"
         f"#{product_id} {data['name']} — {data['price']:,} so'm\n"
-        f"🗂 {category['name'] if category else '—'}\n\n"
+        f"🗂 {category['name'] if category else '—'}\n"
+        f"📷 Kod: {code}\n\n"
         f"🖼 Endi rasm qo‘shing — mijozlar ko‘proq sotib oladi!",
         reply_markup=main_menu_keyboard(is_admin(update.effective_user.id)),
     )
@@ -2286,6 +2399,12 @@ def build_product_admin_conversation() -> ConversationHandler:
             ),
         ],
         states={
+            ProductAdminState.BARCODE: [
+                MessageHandler(
+                    filters.StatusUpdate.WEB_APP_DATA, admin_product_barcode_webapp
+                ),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, admin_product_barcode),
+            ],
             ProductAdminState.NAME: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, admin_product_name)
             ],

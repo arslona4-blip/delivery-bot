@@ -62,6 +62,31 @@ def barcode_attach_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
+def new_product_barcode_keyboard() -> ReplyKeyboardMarkup:
+    """Yangi mahsulot: avval shtrix-kod (skan yoki o'tkazib yuborish)."""
+    rows: list[list] = []
+    if MINIAPP_URL:
+        rows.append(
+            [
+                KeyboardButton(
+                    "📷 Kodni skanerlash",
+                    web_app=WebAppInfo(url=f"{MINIAPP_URL}/scan.html?mode=add"),
+                )
+            ]
+        )
+    rows.append(["⏭ O'tkazib yuborish"])
+    rows.append(["❌ Bekor qilish"])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
+
+
+def suggested_name_keyboard(name: str) -> ReplyKeyboardMarkup:
+    label = name if len(name) <= 40 else name[:37] + "…"
+    return ReplyKeyboardMarkup(
+        [[f"✅ {label}"], ["✏️ Boshqa nom yozaman"], ["❌ Bekor qilish"]],
+        resize_keyboard=True,
+    )
+
+
 def miniapp_keyboard() -> InlineKeyboardMarkup | None:
     """Mini App ochish tugmasi (faqat MINIAPP_URL sozlanganda)."""
     if not MINIAPP_URL:
@@ -599,7 +624,7 @@ def admin_category_item_keyboard(category_id: int) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
-                    "➕ Yangi mahsulot",
+                    "📷➕ Mahsulot (skan)",
                     callback_data=f"admin_prod:addin:{category_id}",
                 )
             ],
@@ -631,7 +656,7 @@ def admin_category_products_list_keyboard(
     rows.append(
         [
             InlineKeyboardButton(
-                "➕ Yangi mahsulot",
+                "📷➕ Mahsulot (skan)",
                 callback_data=f"admin_prod:addin:{category_id}",
             )
         ]
@@ -656,7 +681,7 @@ def admin_category_products_header_keyboard(category_id: int) -> InlineKeyboardM
         [
             [
                 InlineKeyboardButton(
-                    "➕ Yangi mahsulot",
+                    "📷➕ Mahsulot (skan)",
                     callback_data=f"admin_prod:addin:{category_id}",
                 )
             ],
