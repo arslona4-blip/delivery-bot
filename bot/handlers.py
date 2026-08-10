@@ -117,6 +117,7 @@ from bot.keyboards import (
     promo_keyboard,
     new_product_barcode_keyboard,
     scan_sale_keyboard,
+    shop_inline_button,
     suggested_name_keyboard,
 )
 from bot.timeutil import format_now_html, get_delivery_slots, money_html
@@ -224,57 +225,44 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"└──────────────┘\n\n"
         f"🏷 Promo: <b>BARAKA10</b> — 10% chegirma "
         f"(min {MIN_ORDER_AMOUNT:,} so‘m)\n"
-        f"👇 Bir bosishda buyurtma boshlang!",
+        f"👇 Pastdagi <b>🛒 Do'kon</b> tugmasini bosing!",
         reply_markup=menu_for(user.id),
         parse_mode="HTML",
     )
     start_rows: list[list[InlineKeyboardButton]] = []
-    if MINIAPP_URL:
-        start_rows.append(
-            [
-                InlineKeyboardButton(
-                    "🛒 Do'konni ochish",
-                    web_app=WebAppInfo(url=MINIAPP_URL),
-                )
-            ]
-        )
-        start_rows.append(
-            [
-                InlineKeyboardButton(
-                    "📷 Skaner bilan sotish",
-                    web_app=WebAppInfo(url=f"{MINIAPP_URL}/scan.html?mode=sale"),
-                )
-            ]
-        )
-    start_rows.extend(
+    shop_btn = shop_inline_button("🛒 Do'konni ochish")
+    if shop_btn:
+        start_rows.append([shop_btn])
+    start_rows.append(
         [
+            InlineKeyboardButton("🛒 Savatcham", callback_data="cart:view"),
+            InlineKeyboardButton("📞 Aloqa", callback_data="catalog:contact"),
+        ]
+    )
+    if not shop_btn:
+        start_rows.insert(
+            0,
             [
                 InlineKeyboardButton(
                     "🛍 Katalogni ochish", callback_data="catalog:list"
                 )
             ],
-            [
-                InlineKeyboardButton(
-                    "🛒 Savatcham", callback_data="cart:view"
-                ),
-                InlineKeyboardButton(
-                    "📞 Aloqa", callback_data="catalog:contact"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    "👥 Do‘stlarga ulashish", url=share_url
-                )
-            ],
-        ]
+        )
+    start_rows.append(
+        [InlineKeyboardButton("👥 Do‘stlarga ulashish", url=share_url)]
     )
     await update.message.reply_text(
-        "Nimadan boshlaymiz? 😊",
+        "Tez buyurtma uchun do‘konni oching 👇",
         reply_markup=InlineKeyboardMarkup(start_rows),
     )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    shop_line = (
+        "🛒 <b>Do'kon</b> — bir bosishda web do‘kon (rasmli katalog)\n"
+        if MINIAPP_URL
+        else ""
+    )
     scan_line = (
         "📷 <b>Skaner</b> — shtrix-kod bilan tezkor savatga\n"
         if MINIAPP_URL
@@ -282,6 +270,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     )
     await update.message.reply_text(
         "🧭 <b>Qanday buyurtma beriladi?</b>\n\n"
+        f"{shop_line}"
         f"{scan_line}"
         "1️⃣ <b>Katalog</b> — yoqqan mahsulotni bosing\n"
         "    (avtomatik savatchaga tushadi ✅)\n"
@@ -1323,7 +1312,10 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     await update.message.reply_text(
-        f"🛠 <b>Admin panel</b>\n{format_now_html()}",
+        f"🛠 <b>Admin panel</b>\n"
+        f"{format_now_html()}\n\n"
+        "🛒 Do'kon — mijoz ko‘rinishi\n"
+        "📷 Skaner — kod bilan savatga",
         reply_markup=admin_menu_keyboard(),
         parse_mode="HTML",
     )

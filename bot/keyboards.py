@@ -9,15 +9,55 @@ from telegram import (
 from bot.config import MINIAPP_URL, ORDER_STATUS_LABELS
 
 
+def miniapp_shop_url() -> str:
+    return (MINIAPP_URL or "").rstrip("/")
+
+
+def shop_reply_button(label: str = "🛒 Do'kon") -> KeyboardButton | None:
+    url = miniapp_shop_url()
+    if not url:
+        return None
+    return KeyboardButton(label, web_app=WebAppInfo(url=url))
+
+
+def shop_inline_button(label: str = "🛒 Do'kon") -> InlineKeyboardButton | None:
+    url = miniapp_shop_url()
+    if not url:
+        return None
+    return InlineKeyboardButton(label, web_app=WebAppInfo(url=url))
+
+
+def scan_inline_button(label: str = "📷 Skaner") -> InlineKeyboardButton | None:
+    url = miniapp_shop_url()
+    if not url:
+        return None
+    return InlineKeyboardButton(
+        label, web_app=WebAppInfo(url=f"{url}/scan.html?mode=sale")
+    )
+
+
 def main_menu_keyboard(is_admin: bool = False, is_courier: bool = False) -> ReplyKeyboardMarkup:
-    # Mijoz uchun ixcham menyu — asosiy 4 tugma
-    rows = [
-        ["🛍 Katalog", "🛒 Savatcha"],
-        ["📋 Mening buyurtmalarim", "📞 Aloqa"],
-        ["⋯ Ko'proq"],
-    ]
-    if MINIAPP_URL:
-        rows.insert(0, [KeyboardButton("📷 Skaner", web_app=WebAppInfo(url=f"{MINIAPP_URL}/scan.html?mode=sale"))])
+    rows: list[list] = []
+    shop_btn = shop_reply_button()
+    if shop_btn:
+        rows.append([shop_btn])
+        rows.append(["🛒 Savatcha", "📋 Mening buyurtmalarim"])
+        rows.append(
+            [
+                KeyboardButton(
+                    "📷 Skaner",
+                    web_app=WebAppInfo(
+                        url=f"{miniapp_shop_url()}/scan.html?mode=sale"
+                    ),
+                ),
+                "🛍 Katalog",
+            ]
+        )
+        rows.append(["📞 Aloqa", "⋯ Ko'proq"])
+    else:
+        rows.append(["🛍 Katalog", "🛒 Savatcha"])
+        rows.append(["📋 Mening buyurtmalarim", "📞 Aloqa"])
+        rows.append(["⋯ Ko'proq"])
     staff_row = []
     if is_admin:
         staff_row.append("🛠 Admin panel")
@@ -29,21 +69,23 @@ def main_menu_keyboard(is_admin: bool = False, is_courier: bool = False) -> Repl
 
 
 def scan_sale_keyboard() -> ReplyKeyboardMarkup | None:
-    if not MINIAPP_URL:
+    url = miniapp_shop_url()
+    if not url:
         return None
-    return ReplyKeyboardMarkup(
+    shop = shop_reply_button("🛒 Do'kon")
+    rows: list[list] = []
+    if shop:
+        rows.append([shop])
+    rows.append(
         [
-            [
-                KeyboardButton(
-                    "📷 Yana skan",
-                    web_app=WebAppInfo(url=f"{MINIAPP_URL}/scan.html?mode=sale"),
-                )
-            ],
-            ["🛒 Savatcha", "🛍 Katalog"],
-            ["⬅️ Asosiy menyu"],
-        ],
-        resize_keyboard=True,
+            KeyboardButton(
+                "📷 Yana skan",
+                web_app=WebAppInfo(url=f"{url}/scan.html?mode=sale"),
+            )
+        ]
     )
+    rows.extend([["🛒 Savatcha", "🛍 Katalog"], ["⬅️ Asosiy menyu"]])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
 def barcode_attach_keyboard() -> ReplyKeyboardMarkup:
@@ -89,29 +131,22 @@ def suggested_name_keyboard(name: str) -> ReplyKeyboardMarkup:
 
 def miniapp_keyboard() -> InlineKeyboardMarkup | None:
     """Mini App ochish tugmasi (faqat MINIAPP_URL sozlanganda)."""
-    if not MINIAPP_URL:
+    btn = shop_inline_button("🛒 Do'konni ochish")
+    if not btn:
         return None
-    return InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton(
-                    "🛒 Do'konni ochish",
-                    web_app=WebAppInfo(url=MINIAPP_URL),
-                )
-            ]
-        ]
-    )
+    return InlineKeyboardMarkup([[btn]])
 
 
 def more_menu_keyboard() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        [
-            ["🔍 Qidiruv", "⭐ Sevimlilar"],
-            ["🎁 Bonus", "👥 Ulashish"],
-            ["ℹ️ Yordam", "⬅️ Asosiy menyu"],
-        ],
-        resize_keyboard=True,
-    )
+    rows = [
+        ["🔍 Qidiruv", "⭐ Sevimlilar"],
+        ["🎁 Bonus", "👥 Ulashish"],
+        ["ℹ️ Yordam", "⬅️ Asosiy menyu"],
+    ]
+    shop = shop_reply_button("🛒 Do'kon")
+    if shop:
+        rows.insert(0, [shop])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
 def contact_keyboard(last_phone: str | None = None) -> ReplyKeyboardMarkup:
@@ -410,7 +445,14 @@ def admin_payment_keyboard(order_id: int) -> InlineKeyboardMarkup:
 
 
 def admin_menu_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
+    rows: list[list[InlineKeyboardButton]] = []
+    shop = shop_inline_button("🛒 Do'kon")
+    scan = scan_inline_button()
+    if shop and scan:
+        rows.append([shop, scan])
+    elif shop:
+        rows.append([shop])
+    rows.extend(
         [
             [InlineKeyboardButton("🆕 Yangi buyurtmalar", callback_data="admin:new")],
             [
@@ -426,6 +468,7 @@ def admin_menu_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton("📥 Excel import", callback_data="admin:import")],
         ]
     )
+    return InlineKeyboardMarkup(rows)
 
 
 def delivery_slots_keyboard(slots) -> InlineKeyboardMarkup:
