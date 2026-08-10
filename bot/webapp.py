@@ -7,15 +7,17 @@ import hmac
 import json
 import logging
 import threading
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl
 
-from aiohttp import web
+from aiohttp import ClientSession, ClientTimeout, web
 
 from bot.config import (
     ADMIN_IDS,
     BASE_DIR,
     BOT_TOKEN,
+    DATABASE_PATH,
     DELIVERY_PRICE,
     MIN_ORDER_AMOUNT,
     SHOP_ADDRESS,
@@ -46,11 +48,53 @@ logger = logging.getLogger(__name__)
 
 _bot = None
 MINIAPP_DIR = BASE_DIR / "miniapp"
+PHOTOS_DIR = Path(DATABASE_PATH).resolve().parent / "photos"
 
 
 def set_bot(bot) -> None:
     global _bot
     _bot = bot
+
+
+def photo_cache_path(product_id: int) -> Path:
+    return PHOTOS_DIR / f"{product_id}.jpg"
+
+
+async def fetch_telegram_file_bytes(file_id: str) -> bytes:
+    """PTB event loop bilan aralashmaslik uchun to'g'ridan-to'g'ri Bot API."""
+    if not BOT_TOKEN or not file_id:
+        raise ValueError("BOT_TOKEN yoki file_id yo'q")
+    async with ClientSession() as session:
+        async with session.get(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/getFile",
+            params={"file_id": file_id},
+            timeout=ClientTimeout(total=20),
+        ) as meta_resp:
+            meta = await meta_resp.json()
+        if not meta.get("ok"):
+            raise RuntimeError(meta.get("description") or "getFile xato")
+        file_path = (meta.get("result") or {}).get("file_path")
+        if not file_path:
+            raise RuntimeError("file_path yo'q")
+        async with session.get(
+            f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}",
+            timeout=ClientTimeout(total=40),
+        ) as file_resp:
+            if file_resp.status != 200:
+                raise RuntimeError(f"file download HTTP {file_resp.status}")
+            return await file_resp.read()
+
+
+async def cache_product_photo(product_id: int, file_id: str) -> Path | None:
+    try:
+        data = await fetch_telegram_file_bytes(file_id)
+    except Exception as exc:
+        logger.warning("Rasm cache xatosi product=%s: %s", product_id, exc)
+        return None
+    PHOTOS_DIR.mkdir(parents=True, exist_ok=True)
+    path = photo_cache_path(product_id)
+    path.write_bytes(data)
+    return path
 
 
 def validate_webapp_init_data(init_data: str) -> dict[str, Any] | None:
@@ -212,12 +256,14 @@ async def api_barcode(request: web.Request) -> web.Response:
 
 
 async def api_photo(request: web.Request) -> web.Response:
-    if _bot is None:
-        raise web.HTTPServiceUnavailable(text="Bot hali tayyor emas")
     try:
         product_id = int(request.match_info["product_id"])
     except (KeyError, ValueError):
         raise web.HTTPBadRequest(text="product_id noto'g'ri")
+
+    cache = photo_cache_path(product_id)
+    if cache.is_file() and cache.stat().st_size > 0:
+        return web.FileResponse(cache, headers={"Cache-Control": "public, max-age=86400"})
 
     product = get_product(product_id)
     if not product:
@@ -229,13 +275,18 @@ async def api_photo(request: web.Request) -> web.Response:
         raise web.HTTPNotFound(text="Rasm yo'q")
 
     try:
-        tg_file = await _bot.get_file(file_id)
-        data = await tg_file.download_as_bytearray()
+        data = await fetch_telegram_file_bytes(str(file_id))
+        PHOTOS_DIR.mkdir(parents=True, exist_ok=True)
+        cache.write_bytes(data)
     except Exception as exc:
         logger.warning("Rasm yuklash xatosi product=%s: %s", product_id, exc)
         raise web.HTTPBadGateway(text="Rasm yuklanmadi") from exc
 
-    return web.Response(body=bytes(data), content_type="image/jpeg")
+    return web.Response(
+        body=data,
+        content_type="image/jpeg",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 async def api_order(request: web.Request) -> web.Response:

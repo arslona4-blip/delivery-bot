@@ -632,8 +632,52 @@ async def product_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     variants = get_variants(product_id)
 
-    # O'lchamsiz mahsulot — darhol savatga, qisqa bildirishnoma (o'zi yo'qoladi)
+    # O'lchamsiz mahsulot — rasm bo'lsa kartochka, yo'qsa tezkor savatga
     if not variants:
+        image_id = None
+        try:
+            image_id = product["image_file_id"]
+        except (KeyError, IndexError):
+            image_id = None
+        if image_id:
+            await query.answer()
+            category_name = product["category_name"] or "—"
+            price_text = product_display_price(product)
+            desc = product["description"] or "Sifatli mahsulot"
+            text = (
+                f"✨ <b>{product['name']}</b>\n"
+                f"📁 {category_name}\n"
+                f"✨ 💰 <b><u>{price_text}</u></b> ✨\n"
+                f"📝 {desc}"
+            )
+            back = (
+                f"catalog:cat:{product['category_id']}"
+                if product["category_id"]
+                else "catalog:list"
+            )
+            kb = InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            "➕ Savatchaga",
+                            callback_data=f"cart_add:{product_id}:0",
+                        )
+                    ],
+                    [InlineKeyboardButton("⬅️ Orqaga", callback_data=back)],
+                ]
+            )
+            try:
+                await query.message.reply_photo(
+                    photo=image_id,
+                    caption=text,
+                    reply_markup=kb,
+                    parse_mode="HTML",
+                )
+            except Exception:
+                await query.message.reply_text(
+                    text, reply_markup=kb, parse_mode="HTML"
+                )
+            return
         add_to_cart(query.from_user.id, product_id, 1, 0)
         count, _ = get_cart_totals(query.from_user.id)
         await query.answer(f"✅ Savatchaga qo'shildi · {count} ta", show_alert=False)

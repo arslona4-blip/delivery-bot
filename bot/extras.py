@@ -327,6 +327,12 @@ async def do_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     file_id = update.message.photo[-1].file_id
     pid = context.user_data.get("photo_product_id")
     set_product_image(pid, file_id)
+    try:
+        from bot.webapp import cache_product_photo
+
+        await cache_product_photo(int(pid), file_id)
+    except Exception:
+        pass
     await update.message.reply_text(
         f"✅ Rasm saqlandi! (#{pid})\n"
         f"Katalogda mahsulot endi rasm bilan chiqadi.",
