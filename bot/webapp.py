@@ -98,24 +98,36 @@ async def cache_product_photo(product_id: int, file_id: str) -> Path | None:
     return path
 
 
+def _parse_init_data_pairs(init_data: str) -> dict[str, str]:
+    """initData query-string ni juftliklarga ajratadi."""
+    parsed: dict[str, str] = {}
+    for chunk in init_data.split("&"):
+        if not chunk or "=" not in chunk:
+            continue
+        key, raw_val = chunk.split("=", 1)
+        parsed[key] = unquote(raw_val)
+    # Ba'zi klientlar + ni bo'shliq qilib yuboradi — qayta urinish
+    if "user" not in parsed:
+        for key, value in parse_qsl(init_data, keep_blank_values=True):
+            parsed[key] = value
+    return parsed
+
+
 def validate_webapp_init_data(init_data: str) -> dict[str, Any] | None:
     """Telegram WebApp initData HMAC tekshiruvi."""
     if not init_data or not BOT_TOKEN:
         return None
-    token = BOT_TOKEN.strip()
+    token = BOT_TOKEN.strip().strip('"').strip("'")
     try:
-        parsed: dict[str, str] = {}
-        for chunk in init_data.split("&"):
-            if not chunk or "=" not in chunk:
-                continue
-            key, raw_val = chunk.split("=", 1)
-            parsed[key] = unquote(raw_val)
+        parsed = _parse_init_data_pairs(init_data)
     except Exception:
         return None
 
     received_hash = parsed.pop("hash", None)
+    # Yangi Telegram: Ed25519 signature — bot HMAC hashiga kirmaydi
     parsed.pop("signature", None)
     if not received_hash:
+        logger.warning("initData: hash yo'q, len=%s", len(init_data))
         return None
 
     auth_raw = parsed.get("auth_date", "")
@@ -132,7 +144,8 @@ def validate_webapp_init_data(init_data: str) -> dict[str, Any] | None:
     ).hexdigest()
     if not hmac.compare_digest(calculated, received_hash):
         logger.warning(
-            "initData hash mos kelmadi (token yoki klient versiyasi?)"
+            "initData hash mos kelmadi keys=%s",
+            ",".join(sorted(parsed.keys())),
         )
         return None
 
@@ -147,16 +160,11 @@ def validate_webapp_init_data(init_data: str) -> dict[str, Any] | None:
 
 
 def parse_init_data_user_fallback(init_data: str) -> dict[str, Any] | None:
-    """Hash yaroqsiz bo'lsa ham user id ni xavfsiz olish (auth_date bilan)."""
+    """Hash yaroqsiz bo'lsa ham user id ni olish (auth_date 24 soat)."""
     if not init_data:
         return None
     try:
-        parsed: dict[str, str] = {}
-        for chunk in init_data.split("&"):
-            if not chunk or "=" not in chunk:
-                continue
-            key, raw_val = chunk.split("=", 1)
-            parsed[key] = unquote(raw_val)
+        parsed = _parse_init_data_pairs(init_data)
     except Exception:
         return None
     auth_raw = parsed.get("auth_date", "")
@@ -172,6 +180,90 @@ def parse_init_data_user_fallback(init_data: str) -> dict[str, Any] | None:
     if not isinstance(user, dict) or not user.get("id"):
         return None
     return user
+
+
+def resolve_order_items(
+    items_raw: list,
+) -> tuple[list[dict[str, Any]], int]:
+    """Mini App savatidan order_items + subtotal."""
+    order_items: list[dict[str, Any]] = []
+    subtotal = 0
+    for raw in items_raw:
+        product_id = int(raw["product_id"])
+        quantity = int(raw.get("quantity") or 1)
+        if quantity < 1:
+            raise ValueError("Miqdor 1 dan kam bo'lmasin")
+        variant_id_raw = raw.get("variant_id")
+        variant_id = (
+            int(variant_id_raw)
+            if variant_id_raw not in (None, "", 0, "0")
+            else 0
+        )
+        product = get_product(product_id)
+        if not product:
+            raise ValueError(f"Mahsulot topilmadi: {product_id}")
+        if variant_id:
+            variant = get_variant(variant_id)
+            if not variant or int(variant["product_id"]) != product_id:
+                raise ValueError(f"Variant topilmadi: {variant_id}")
+            unit_price = int(variant["price"])
+            name = f"{product['name']} ({variant['name']})"
+        else:
+            variants = get_variants(product_id, active_only=True)
+            if variants:
+                raise ValueError(f"'{product['name']}' uchun o'lcham tanlang")
+            unit_price = int(product["price"])
+            name = str(product["name"])
+        subtotal += unit_price * quantity
+        order_items.append(
+            {
+                "product_id": product_id,
+                "name": name,
+                "price": unit_price,
+                "quantity": quantity,
+            }
+        )
+    return order_items, subtotal
+
+
+def place_miniapp_order(
+    *,
+    user_id: int,
+    full_name: str,
+    username: str | None,
+    phone: str,
+    address: str,
+    slot: str,
+    note: str,
+    items_raw: list,
+) -> tuple[int, int, int, str]:
+    """Buyurtmani DB ga yozadi. Qaytaradi: order_id, total, subtotal, text."""
+    if not phone:
+        raise ValueError("Telefon majburiy")
+    if not address:
+        raise ValueError("Manzil majburiy")
+    if not isinstance(items_raw, list) or not items_raw:
+        raise ValueError("Savatcha bo'sh")
+    order_items, subtotal = resolve_order_items(items_raw)
+    if subtotal < MIN_ORDER_AMOUNT:
+        raise ValueError(f"Minimal buyurtma: {MIN_ORDER_AMOUNT:,} so'm")
+    total = subtotal + DELIVERY_PRICE
+    upsert_user(user_id, full_name, username)
+    set_user_phone(user_id, phone)
+    order_id = create_order(
+        user_id=user_id,
+        pickup_address=SHOP_ADDRESS,
+        delivery_address=address,
+        description=note,
+        phone=phone,
+        price=total,
+        delivery_slot=slot,
+        subtotal=subtotal,
+    )
+    save_order_items_direct(order_id, order_items)
+    order_row = get_order(order_id)
+    text = format_order(order_row) if order_row else f"Buyurtma #{order_id}"
+    return order_id, total, subtotal, text
 
 
 @web.middleware
@@ -367,96 +459,46 @@ async def api_order(request: web.Request) -> web.Response:
             )
             username = fallback_user.get("username")
     if user_id is None:
+        # Telegram WebView ba'zan initData bermaydi — klient yuborgan user
+        unsafe = body.get("telegram_user") or {}
+        if isinstance(unsafe, dict) and str(unsafe.get("id", "")).isdigit():
+            user_id = int(unsafe["id"])
+            full_name = (
+                f"{unsafe.get('first_name') or ''} {unsafe.get('last_name') or ''}".strip()
+                or full_name
+            )
+            username = unsafe.get("username")
+            logger.warning("Order via telegram_user fallback user=%s", user_id)
+    if user_id is None:
         dev_raw = body.get("dev_user_id")
         if dev_raw is not None and str(dev_raw).strip().isdigit():
             user_id = int(dev_raw)
             full_name = f"Dev user {user_id}"
         else:
+            logger.warning(
+                "Order 401: initData_len=%s has_unsafe=%s",
+                len(init_data),
+                bool(body.get("telegram_user")),
+            )
             raise web.HTTPUnauthorized(
                 text="initData yaroqsiz. Botdan «🛒 Do'kon» tugmasini qayta oching."
             )
 
-    phone = str(body.get("phone") or "").strip()
-    address = str(body.get("address") or "").strip()
-    slot = str(body.get("slot") or "").strip()
-    note = str(body.get("note") or "").strip()
-    items_raw = body.get("items") or []
-
-    if not phone:
-        raise web.HTTPBadRequest(text="Telefon majburiy")
-    if not address:
-        raise web.HTTPBadRequest(text="Manzil majburiy")
-    if not isinstance(items_raw, list) or not items_raw:
-        raise web.HTTPBadRequest(text="Savatcha bo'sh")
-
-    order_items: list[dict[str, Any]] = []
-    subtotal = 0
-
-    for raw in items_raw:
-        try:
-            product_id = int(raw["product_id"])
-            quantity = int(raw.get("quantity") or 1)
-        except (KeyError, TypeError, ValueError) as exc:
-            raise web.HTTPBadRequest(text="items format noto'g'ri") from exc
-        if quantity < 1:
-            raise web.HTTPBadRequest(text="Miqdor 1 dan kam bo'lmasin")
-
-        variant_id_raw = raw.get("variant_id")
-        variant_id = int(variant_id_raw) if variant_id_raw not in (None, "", 0, "0") else 0
-
-        product = get_product(product_id)
-        if not product:
-            raise web.HTTPBadRequest(text=f"Mahsulot topilmadi: {product_id}")
-
-        if variant_id:
-            variant = get_variant(variant_id)
-            if not variant or int(variant["product_id"]) != product_id:
-                raise web.HTTPBadRequest(text=f"Variant topilmadi: {variant_id}")
-            unit_price = int(variant["price"])
-            name = f"{product['name']} ({variant['name']})"
-        else:
-            variants = get_variants(product_id, active_only=True)
-            if variants:
-                raise web.HTTPBadRequest(
-                    text=f"'{product['name']}' uchun o'lcham tanlang"
-                )
-            unit_price = int(product["price"])
-            name = str(product["name"])
-
-        line_total = unit_price * quantity
-        subtotal += line_total
-        order_items.append(
-            {
-                "product_id": product_id,
-                "name": name,
-                "price": unit_price,
-                "quantity": quantity,
-            }
+    try:
+        order_id, total, subtotal, text = place_miniapp_order(
+            user_id=user_id,
+            full_name=full_name,
+            username=username,
+            phone=str(body.get("phone") or "").strip(),
+            address=str(body.get("address") or "").strip(),
+            slot=str(body.get("slot") or "").strip(),
+            note=str(body.get("note") or "").strip(),
+            items_raw=body.get("items") or [],
         )
-
-    if subtotal < MIN_ORDER_AMOUNT:
-        raise web.HTTPBadRequest(
-            text=f"Minimal buyurtma: {MIN_ORDER_AMOUNT:,} so'm"
-        )
-
-    total = subtotal + DELIVERY_PRICE
-    upsert_user(user_id, full_name, username)
-    set_user_phone(user_id, phone)
-
-    order_id = create_order(
-        user_id=user_id,
-        pickup_address=SHOP_ADDRESS,
-        delivery_address=address,
-        description=note,
-        phone=phone,
-        price=total,
-        delivery_slot=slot,
-        subtotal=subtotal,
-    )
-    save_order_items_direct(order_id, order_items)
-
-    order_row = get_order(order_id)
-    text = format_order(order_row) if order_row else f"Buyurtma #{order_id}"
+    except ValueError as exc:
+        raise web.HTTPBadRequest(text=str(exc)) from exc
+    except (KeyError, TypeError) as exc:
+        raise web.HTTPBadRequest(text="items format noto'g'ri") from exc
 
     if _bot is not None:
         for admin_id in ADMIN_IDS:

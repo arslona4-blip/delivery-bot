@@ -380,22 +380,56 @@
     return tg.initData || "";
   }
 
+  function getTelegramUser() {
+    const u = tg && tg.initDataUnsafe && tg.initDataUnsafe.user;
+    if (!u || !u.id) return null;
+    return {
+      id: u.id,
+      first_name: u.first_name || "",
+      last_name: u.last_name || "",
+      username: u.username || "",
+    };
+  }
+
+  function checkoutViaSendData(payload) {
+    if (!tg || typeof tg.sendData !== "function") return false;
+    try {
+      tg.sendData(
+        JSON.stringify({
+          action: "checkout",
+          phone: payload.phone,
+          address: payload.address,
+          slot: payload.slot,
+          note: payload.note,
+          items: payload.items,
+        })
+      );
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   async function onCheckout(event) {
     event.preventDefault();
     els.status.hidden = true;
     els.status.classList.remove("error");
 
-    const initData = getInitData();
-    if (!initData && !(new URLSearchParams(window.location.search).get("dev_user_id"))) {
+    if (!state.cart.length) {
       els.status.hidden = false;
       els.status.classList.add("error");
-      els.status.textContent =
-        "Telegram orqali ochilmagan. Botdan «🛒 Do'kon» tugmasini bosing.";
+      els.status.textContent = "Savatcha bo'sh";
       return;
     }
 
+    const initData = getInitData();
+    const telegramUser = getTelegramUser();
+    const params = new URLSearchParams(window.location.search);
+    const devUser = params.get("dev_user_id");
+
     const payload = {
       initData,
+      telegram_user: telegramUser,
       phone: els.phone.value.trim(),
       address: els.address.value.trim(),
       slot: els.slot.value,
@@ -406,16 +440,33 @@
         variant_id: item.variant_id || undefined,
       })),
     };
-
-    // Brauzerda test: ?dev_user_id=123456789
-    const params = new URLSearchParams(window.location.search);
-    const devUser = params.get("dev_user_id");
-    if (devUser && !payload.initData) {
+    if (devUser && !payload.initData && !telegramUser) {
       payload.dev_user_id = Number(devUser);
     }
 
     els.submit.disabled = true;
     els.submit.textContent = "Yuborilmoqda...";
+
+    // 1) Eng ishonchli: botga sendData (klaviatura Do'kon tugmasi)
+    if (checkoutViaSendData(payload)) {
+      state.cart = [];
+      saveCart();
+      updateBadge();
+      els.status.hidden = false;
+      els.status.textContent = "Buyurtma botga yuborildi…";
+      return;
+    }
+
+    // 2) API orqali (Menu Button / ba'zi klientlar)
+    if (!initData && !telegramUser && !payload.dev_user_id) {
+      els.status.hidden = false;
+      els.status.classList.add("error");
+      els.status.textContent =
+        "Telegram orqali ochilmagan. Botdan «🛒 Do'kon» tugmasini bosing.";
+      els.submit.disabled = false;
+      els.submit.textContent = "Buyurtma berish";
+      return;
+    }
 
     try {
       const result = await api("/api/order", {
@@ -446,9 +497,7 @@
       els.submit.disabled = false;
     } finally {
       els.submit.textContent = "Buyurtma berish";
-      if (!els.status.classList.contains("error")) {
-        /* success — tugma o'chirilgan holda qoladi */
-      } else {
+      if (els.status.classList.contains("error")) {
         renderCart();
       }
     }

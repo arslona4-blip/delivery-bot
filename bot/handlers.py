@@ -286,7 +286,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def webapp_scan_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Kamera skaneridan kelgan kodlar → savatcha (yoki admin barcode)."""
+    """Kamera skaner / Mini App buyurtma (sendData)."""
     user = update.effective_user
     msg = update.effective_message
     if not user or not msg or not msg.web_app_data:
@@ -294,7 +294,7 @@ async def webapp_scan_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     try:
         payload = json.loads(msg.web_app_data.data)
     except json.JSONDecodeError:
-        await msg.reply_text("Skaner ma’lumoti o‘qilmadi.")
+        await msg.reply_text("Ma’lumot o‘qilmadi.")
         return
 
     # Admin barcode biriktirish — extras conversation ushlamasa fallback
@@ -305,6 +305,38 @@ async def webapp_scan_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     action = payload.get("action") or "scan"
+    if action == "checkout":
+        from bot.webapp import place_miniapp_order
+
+        try:
+            order_id, _total, _sub, text = place_miniapp_order(
+                user_id=user.id,
+                full_name=user.full_name or user.first_name or "Mijoz",
+                username=user.username,
+                phone=str(payload.get("phone") or "").strip(),
+                address=str(payload.get("address") or "").strip(),
+                slot=str(payload.get("slot") or "").strip(),
+                note=str(payload.get("note") or "").strip(),
+                items_raw=payload.get("items") or [],
+            )
+        except ValueError as exc:
+            await msg.reply_text(f"❌ {exc}", reply_markup=menu_for(user.id))
+            return
+        except (KeyError, TypeError):
+            await msg.reply_text("❌ Savatcha formati noto‘g‘ri.")
+            return
+
+        await msg.reply_text(
+            f"✅ Buyurtmangiz qabul qilindi!\n\n{text}",
+            reply_markup=menu_for(user.id),
+        )
+        for admin_id in ADMIN_IDS:
+            try:
+                await context.bot.send_message(admin_id, f"🆕 Mini App\n{text}")
+            except Exception:
+                pass
+        return
+
     barcodes: list[str] = []
     if action == "scan_many":
         barcodes = [
