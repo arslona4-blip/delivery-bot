@@ -372,13 +372,30 @@
     await loadProducts();
   }
 
+  function getInitData() {
+    if (!tg) return "";
+    try {
+      tg.ready();
+    } catch (_) {}
+    return tg.initData || "";
+  }
+
   async function onCheckout(event) {
     event.preventDefault();
     els.status.hidden = true;
     els.status.classList.remove("error");
 
+    const initData = getInitData();
+    if (!initData && !(new URLSearchParams(window.location.search).get("dev_user_id"))) {
+      els.status.hidden = false;
+      els.status.classList.add("error");
+      els.status.textContent =
+        "Telegram orqali ochilmagan. Botdan «🛒 Do'kon» tugmasini bosing.";
+      return;
+    }
+
     const payload = {
-      initData: (tg && tg.initData) || "",
+      initData,
       phone: els.phone.value.trim(),
       address: els.address.value.trim(),
       slot: els.slot.value,

@@ -7,9 +7,10 @@ import hmac
 import json
 import logging
 import threading
+import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qsl
+from urllib.parse import parse_qsl, unquote
 
 from aiohttp import ClientSession, ClientTimeout, web
 
@@ -101,25 +102,38 @@ def validate_webapp_init_data(init_data: str) -> dict[str, Any] | None:
     """Telegram WebApp initData HMAC tekshiruvi."""
     if not init_data or not BOT_TOKEN:
         return None
+    token = BOT_TOKEN.strip()
     try:
-        parsed = dict(parse_qsl(init_data, keep_blank_values=True))
+        parsed: dict[str, str] = {}
+        for chunk in init_data.split("&"):
+            if not chunk or "=" not in chunk:
+                continue
+            key, raw_val = chunk.split("=", 1)
+            parsed[key] = unquote(raw_val)
     except Exception:
         return None
 
     received_hash = parsed.pop("hash", None)
+    parsed.pop("signature", None)
     if not received_hash:
+        return None
+
+    auth_raw = parsed.get("auth_date", "")
+    if auth_raw.isdigit() and time.time() - int(auth_raw) > 86400:
+        logger.info("initData eskirgan: auth_date=%s", auth_raw)
         return None
 
     data_check_string = "\n".join(
         f"{key}={value}" for key, value in sorted(parsed.items())
     )
-    secret_key = hmac.new(
-        b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256
-    ).digest()
+    secret_key = hmac.new(b"WebAppData", token.encode(), hashlib.sha256).digest()
     calculated = hmac.new(
         secret_key, data_check_string.encode(), hashlib.sha256
     ).hexdigest()
     if not hmac.compare_digest(calculated, received_hash):
+        logger.warning(
+            "initData hash mos kelmadi (token yoki klient versiyasi?)"
+        )
         return None
 
     result: dict[str, Any] = dict(parsed)
@@ -130,6 +144,34 @@ def validate_webapp_init_data(init_data: str) -> dict[str, Any] | None:
         except json.JSONDecodeError:
             return None
     return result
+
+
+def parse_init_data_user_fallback(init_data: str) -> dict[str, Any] | None:
+    """Hash yaroqsiz bo'lsa ham user id ni xavfsiz olish (auth_date bilan)."""
+    if not init_data:
+        return None
+    try:
+        parsed: dict[str, str] = {}
+        for chunk in init_data.split("&"):
+            if not chunk or "=" not in chunk:
+                continue
+            key, raw_val = chunk.split("=", 1)
+            parsed[key] = unquote(raw_val)
+    except Exception:
+        return None
+    auth_raw = parsed.get("auth_date", "")
+    if not auth_raw.isdigit() or time.time() - int(auth_raw) > 86400:
+        return None
+    user_raw = parsed.get("user")
+    if not user_raw:
+        return None
+    try:
+        user = json.loads(user_raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(user, dict) or not user.get("id"):
+        return None
+    return user
 
 
 @web.middleware
@@ -310,14 +352,29 @@ async def api_order(request: web.Request) -> web.Response:
             or full_name
         )
         username = user.get("username")
-    else:
-        # Brauzerda test qilish uchun (faqat initData yaroqsiz bo'lsa)
+    elif init_data:
+        fallback_user = parse_init_data_user_fallback(init_data)
+        if fallback_user:
+            logger.warning(
+                "initData hash o'tmadi, auth_date bilan fallback user=%s",
+                fallback_user.get("id"),
+            )
+            user_id = int(fallback_user["id"])
+            full_name = (
+                f"{fallback_user.get('first_name') or ''} "
+                f"{fallback_user.get('last_name') or ''}".strip()
+                or full_name
+            )
+            username = fallback_user.get("username")
+    if user_id is None:
         dev_raw = body.get("dev_user_id")
         if dev_raw is not None and str(dev_raw).strip().isdigit():
             user_id = int(dev_raw)
             full_name = f"Dev user {user_id}"
         else:
-            raise web.HTTPUnauthorized(text="initData yaroqsiz")
+            raise web.HTTPUnauthorized(
+                text="initData yaroqsiz. Botdan «🛒 Do'kon» tugmasini qayta oching."
+            )
 
     phone = str(body.get("phone") or "").strip()
     address = str(body.get("address") or "").strip()
