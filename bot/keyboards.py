@@ -16,6 +16,8 @@ def main_menu_keyboard(is_admin: bool = False, is_courier: bool = False) -> Repl
         ["📋 Mening buyurtmalarim", "📞 Aloqa"],
         ["⋯ Ko'proq"],
     ]
+    if MINIAPP_URL:
+        rows.insert(0, [KeyboardButton("📷 Skaner", web_app=WebAppInfo(url=f"{MINIAPP_URL}/scan.html?mode=sale"))])
     staff_row = []
     if is_admin:
         staff_row.append("🛠 Admin panel")
@@ -23,6 +25,40 @@ def main_menu_keyboard(is_admin: bool = False, is_courier: bool = False) -> Repl
         staff_row.append("🚴 Kuryer panel")
     if staff_row:
         rows.append(staff_row)
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
+
+
+def scan_sale_keyboard() -> ReplyKeyboardMarkup | None:
+    if not MINIAPP_URL:
+        return None
+    return ReplyKeyboardMarkup(
+        [
+            [
+                KeyboardButton(
+                    "📷 Yana skan",
+                    web_app=WebAppInfo(url=f"{MINIAPP_URL}/scan.html?mode=sale"),
+                )
+            ],
+            ["🛒 Savatcha", "🛍 Katalog"],
+            ["⬅️ Asosiy menyu"],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def barcode_attach_keyboard() -> ReplyKeyboardMarkup:
+    rows: list[list] = []
+    if MINIAPP_URL:
+        rows.append(
+            [
+                KeyboardButton(
+                    "📷 Kodni skanerlash",
+                    web_app=WebAppInfo(url=f"{MINIAPP_URL}/scan.html?mode=add"),
+                )
+            ]
+        )
+    rows.append(["⏭ O‘chirish (0)"])
+    rows.append(["❌ Bekor qilish"])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
@@ -106,6 +142,15 @@ def catalog_categories_keyboard(categories) -> InlineKeyboardMarkup:
             InlineKeyboardButton("⭐ Sevimlilar", callback_data="catalog:favs"),
         ]
     )
+    if MINIAPP_URL:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    "📷 Skaner",
+                    web_app=WebAppInfo(url=f"{MINIAPP_URL}/scan.html?mode=sale"),
+                )
+            ]
+        )
     rows.append(
         [InlineKeyboardButton("🛒 Savatchaga o'tish", callback_data="cart:view")]
     )
@@ -643,6 +688,11 @@ def admin_product_item_keyboard(product_id: int, is_active: bool) -> InlineKeybo
                 ),
                 InlineKeyboardButton(
                     "🖼 Rasm", callback_data=f"admin_prod:photo:{product_id}"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    "📷 Shtrix-kod", callback_data=f"admin_prod:barcode:{product_id}"
                 ),
             ],
             [

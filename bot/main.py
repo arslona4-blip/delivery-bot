@@ -43,6 +43,7 @@ from bot.handlers import (
     show_more_menu,
     start,
     successful_payment,
+    webapp_scan_data,
 )
 from bot.webapp import set_bot, start_webapp_server
 
@@ -156,6 +157,7 @@ def main() -> None:
     app.add_handler(CallbackQueryHandler(payment_callback, pattern=r"^pay"))
     app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
+    app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, webapp_scan_data))
 
     print("Bot ishga tushdi...")
     app.run_polling(

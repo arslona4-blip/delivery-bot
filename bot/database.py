@@ -186,6 +186,15 @@ def _migrate_features(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE products ADD COLUMN stock INTEGER NOT NULL DEFAULT 100")
     if "image_file_id" not in product_cols:
         conn.execute("ALTER TABLE products ADD COLUMN image_file_id TEXT")
+    if "barcode" not in product_cols:
+        conn.execute("ALTER TABLE products ADD COLUMN barcode TEXT")
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_products_barcode
+        ON products(barcode)
+        WHERE barcode IS NOT NULL AND barcode != ''
+        """
+    )
 
     variant_cols = {
         r[1] for r in conn.execute("PRAGMA table_info(product_variants)").fetchall()
@@ -383,16 +392,55 @@ def create_product(
     price: int,
     description: str = "",
     category_id: int | None = None,
+    barcode: str | None = None,
 ) -> int:
+    code = (barcode or "").strip() or None
     with get_connection() as conn:
         cursor = conn.execute(
             """
-            INSERT INTO products (name, price, description, category_id, is_active)
-            VALUES (?, ?, ?, ?, 1)
+            INSERT INTO products (name, price, description, category_id, is_active, barcode)
+            VALUES (?, ?, ?, ?, 1, ?)
             """,
-            (name, price, description, category_id),
+            (name, price, description, category_id, code),
         )
         return int(cursor.lastrowid)
+
+
+def get_product_by_barcode(barcode: str) -> sqlite3.Row | None:
+    code = (barcode or "").strip()
+    if not code:
+        return None
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT p.*, c.name AS category_name
+            FROM products p
+            LEFT JOIN categories c ON c.id = p.category_id
+            WHERE p.barcode = ? AND p.is_active = 1
+            """,
+            (code,),
+        ).fetchone()
+    return row
+
+
+def set_product_barcode(product_id: int, barcode: str | None) -> None:
+    code = (barcode or "").strip() or None
+    if code in {"0", "-", "none", "yo'q", "yoq"}:
+        code = None
+    with get_connection() as conn:
+        if code:
+            other = conn.execute(
+                "SELECT id, name FROM products WHERE barcode = ? AND id != ?",
+                (code, product_id),
+            ).fetchone()
+            if other:
+                raise ValueError(
+                    f"Kod boshqa mahsulotda: #{other['id']} {other['name']}"
+                )
+        conn.execute(
+            "UPDATE products SET barcode = ? WHERE id = ?",
+            (code, product_id),
+        )
 
 
 def update_product_price(product_id: int, price: int) -> None:

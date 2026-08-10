@@ -1,4 +1,5 @@
 from enum import IntEnum
+import json
 
 from telegram import InputFile, Update
 from telegram.ext import (
@@ -10,7 +11,7 @@ from telegram.ext import (
     filters,
 )
 
-from bot.config import ADMIN_IDS, COURIER_IDS, SHOP_NAME
+from bot.config import ADMIN_IDS, COURIER_IDS, MINIAPP_URL, SHOP_NAME
 from bot.database import (
     add_favorite,
     export_products_csv,
@@ -22,11 +23,13 @@ from bot.database import (
     get_daily_report,
     get_favorites,
     get_order,
+    get_product_by_id,
     import_products_csv,
     is_favorite,
     refill_cart_from_order,
     remove_favorite,
     search_products,
+    set_product_barcode,
     set_product_image,
     set_product_stock,
     update_order_status,
@@ -34,6 +37,7 @@ from bot.database import (
 from bot.keyboards import (
     admin_menu_keyboard,
     admin_order_keyboard,
+    barcode_attach_keyboard,
     cancel_keyboard,
     catalog_keyboard,
     main_menu_keyboard,
@@ -46,6 +50,7 @@ class ExtraState(IntEnum):
     IMPORT_CSV = 3
     STOCK = 4
     PHOTO = 5
+    BARCODE = 6
 
 
 def is_admin(user_id: int) -> bool:
@@ -68,6 +73,8 @@ def cart_qty_by_product(user_id: int) -> dict[int, int]:
 
 
 async def cancel_extra(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data.pop("awaiting_barcode_product_id", None)
+    context.user_data.pop("barcode_product_id", None)
     await update.message.reply_text(
         "Bekor qilindi.",
         reply_markup=menu_kb(update.effective_user.id),
@@ -328,6 +335,123 @@ async def do_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 
+def _barcode_from_payload(payload: dict) -> str:
+    action = payload.get("action") or "scan"
+    if action == "scan_many":
+        codes = [
+            str(x).strip() for x in (payload.get("barcodes") or []) if str(x).strip()
+        ]
+        return codes[0] if codes else ""
+    return str(payload.get("barcode") or "").strip()
+
+
+async def apply_barcode_from_payload(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, payload: dict
+) -> int:
+    msg = update.effective_message
+    pid = context.user_data.get("awaiting_barcode_product_id") or context.user_data.get(
+        "barcode_product_id"
+    )
+    if not msg or not pid:
+        return ConversationHandler.END
+    code = _barcode_from_payload(payload)
+    if not code:
+        await msg.reply_text("Kod bo‘sh. Qayta skanerlang.")
+        return ExtraState.BARCODE
+    try:
+        set_product_barcode(int(pid), code)
+    except ValueError as exc:
+        await msg.reply_text(f"❌ {exc}", reply_markup=barcode_attach_keyboard())
+        return ExtraState.BARCODE
+    context.user_data.pop("awaiting_barcode_product_id", None)
+    context.user_data.pop("barcode_product_id", None)
+    product = get_product_by_id(int(pid))
+    name = product["name"] if product else f"#{pid}"
+    await msg.reply_text(
+        f"✅ Kod biriktirildi\n{name} → `{code}`",
+        parse_mode="Markdown",
+        reply_markup=menu_kb(update.effective_user.id),
+    )
+    return ConversationHandler.END
+
+
+async def start_barcode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    if not query.from_user or query.from_user.id not in ADMIN_IDS:
+        return ConversationHandler.END
+    product_id = int(query.data.split(":")[2])
+    product = get_product_by_id(product_id)
+    if not product:
+        await query.answer("Mahsulot topilmadi.", show_alert=True)
+        return ConversationHandler.END
+    context.user_data["barcode_product_id"] = product_id
+    context.user_data["awaiting_barcode_product_id"] = product_id
+    current = ""
+    try:
+        current = product["barcode"] or "—"
+    except (KeyError, IndexError):
+        current = "—"
+    hint = (
+        "Kamerani oching yoki kodni yozing."
+        if MINIAPP_URL
+        else "Kodni yozing (o‘chirish uchun 0)."
+    )
+    await query.message.reply_text(
+        f"📷 «{product['name']}» uchun shtrix-kod\n"
+        f"Hozirgi: {current}\n\n{hint}",
+        reply_markup=barcode_attach_keyboard(),
+    )
+    return ExtraState.BARCODE
+
+
+async def do_barcode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = (update.message.text or "").strip()
+    if text == "❌ Bekor qilish":
+        context.user_data.pop("awaiting_barcode_product_id", None)
+        context.user_data.pop("barcode_product_id", None)
+        return await cancel_extra(update, context)
+    pid = context.user_data.get("barcode_product_id")
+    if not pid:
+        return ConversationHandler.END
+    if text in {"⏭ O‘chirish (0)", "0"}:
+        set_product_barcode(int(pid), None)
+        context.user_data.pop("awaiting_barcode_product_id", None)
+        context.user_data.pop("barcode_product_id", None)
+        await update.message.reply_text(
+            "✅ Kod o‘chirildi.",
+            reply_markup=menu_kb(update.effective_user.id),
+        )
+        return ConversationHandler.END
+    try:
+        set_product_barcode(int(pid), text)
+    except ValueError as exc:
+        await update.message.reply_text(
+            f"❌ {exc}", reply_markup=barcode_attach_keyboard()
+        )
+        return ExtraState.BARCODE
+    context.user_data.pop("awaiting_barcode_product_id", None)
+    context.user_data.pop("barcode_product_id", None)
+    await update.message.reply_text(
+        f"✅ Kod saqlandi: `{text}`",
+        parse_mode="Markdown",
+        reply_markup=menu_kb(update.effective_user.id),
+    )
+    return ConversationHandler.END
+
+
+async def do_barcode_webapp(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    msg = update.effective_message
+    if not msg or not msg.web_app_data:
+        return ExtraState.BARCODE
+    try:
+        payload = json.loads(msg.web_app_data.data)
+    except json.JSONDecodeError:
+        await msg.reply_text("Skaner o‘qimadi.")
+        return ExtraState.BARCODE
+    return await apply_barcode_from_payload(update, context, payload)
+
+
 async def report_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     from bot.handlers import edit_or_reply
     from bot.timeutil import format_now_html
@@ -430,6 +554,25 @@ def build_extra_conversations() -> list:
             states={
                 ExtraState.PHOTO: [
                     MessageHandler(filters.PHOTO | filters.TEXT, do_photo)
+                ]
+            },
+            fallbacks=[
+                MessageHandler(filters.Regex("^❌ Bekor qilish$"), cancel_extra),
+            ],
+            allow_reentry=True,
+        ),
+        ConversationHandler(
+            entry_points=[
+                CallbackQueryHandler(
+                    start_barcode, pattern=r"^admin_prod:barcode:\d+$"
+                )
+            ],
+            states={
+                ExtraState.BARCODE: [
+                    MessageHandler(
+                        filters.StatusUpdate.WEB_APP_DATA, do_barcode_webapp
+                    ),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, do_barcode),
                 ]
             },
             fallbacks=[

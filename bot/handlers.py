@@ -1,3 +1,4 @@
+import json
 import re
 from enum import IntEnum
 
@@ -62,6 +63,7 @@ from bot.database import (
     get_order,
     get_orders_by_status,
     get_product,
+    get_product_by_barcode,
     get_product_by_id,
     get_products,
     get_stats,
@@ -112,6 +114,7 @@ from bot.keyboards import (
     payment_keyboard,
     product_keyboard,
     promo_keyboard,
+    scan_sale_keyboard,
 )
 from bot.timeutil import format_now_html, get_delivery_slots, money_html
 
@@ -231,6 +234,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 )
             ]
         )
+        start_rows.append(
+            [
+                InlineKeyboardButton(
+                    "📷 Skaner bilan sotish",
+                    web_app=WebAppInfo(url=f"{MINIAPP_URL}/scan.html?mode=sale"),
+                )
+            ]
+        )
     start_rows.extend(
         [
             [
@@ -260,8 +271,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    scan_line = (
+        "📷 <b>Skaner</b> — shtrix-kod bilan tezkor savatga\n"
+        if MINIAPP_URL
+        else ""
+    )
     await update.message.reply_text(
         "🧭 <b>Qanday buyurtma beriladi?</b>\n\n"
+        f"{scan_line}"
         "1️⃣ <b>Katalog</b> — yoqqan mahsulotni bosing\n"
         "    (avtomatik savatchaga tushadi ✅)\n"
         "2️⃣ <b>Savatcha</b> — miqdorni sozlang\n"
@@ -273,6 +290,94 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "Savol bo‘lsa — «📞 Aloqa» ni bosing.",
         parse_mode="HTML",
     )
+
+
+async def webapp_scan_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Kamera skaneridan kelgan kodlar → savatcha (yoki admin barcode)."""
+    user = update.effective_user
+    msg = update.effective_message
+    if not user or not msg or not msg.web_app_data:
+        return
+    try:
+        payload = json.loads(msg.web_app_data.data)
+    except json.JSONDecodeError:
+        await msg.reply_text("Skaner ma’lumoti o‘qilmadi.")
+        return
+
+    # Admin barcode biriktirish — extras conversation ushlamasa fallback
+    if context.user_data.get("awaiting_barcode_product_id"):
+        from bot.extras import apply_barcode_from_payload
+
+        await apply_barcode_from_payload(update, context, payload)
+        return
+
+    action = payload.get("action") or "scan"
+    barcodes: list[str] = []
+    if action == "scan_many":
+        barcodes = [
+            str(x).strip() for x in (payload.get("barcodes") or []) if str(x).strip()
+        ]
+    else:
+        one = str(payload.get("barcode") or "").strip()
+        if one:
+            barcodes = [one]
+    if not barcodes:
+        await msg.reply_text("Kod bo‘sh.")
+        return
+
+    await _sale_add_barcodes(update, context, barcodes)
+
+
+async def _sale_add_barcodes(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, barcodes: list[str]
+) -> None:
+    user = update.effective_user
+    msg = update.effective_message
+    if not user or not msg:
+        return
+
+    added: list[str] = []
+    need_size: list[tuple] = []
+    missing: list[str] = []
+
+    for code in barcodes:
+        product = get_product_by_barcode(code)
+        if not product:
+            missing.append(code)
+            continue
+        variants = get_variants(int(product["id"]))
+        if variants:
+            need_size.append((product, variants))
+            continue
+        add_to_cart(user.id, int(product["id"]), 1, 0)
+        added.append(str(product["name"]))
+
+    parts: list[str] = []
+    if added:
+        parts.append("📷 Savatchaga:\n" + "\n".join(f"• {n}" for n in added[-20:]))
+    if missing:
+        parts.append("❌ Topilmadi:\n" + "\n".join(f"• `{c}`" for c in missing[:10]))
+    if not parts and not need_size:
+        parts.append("Hech narsa qo‘shilmadi.")
+
+    kb = scan_sale_keyboard() or menu_for(user.id)
+    await msg.reply_text(
+        "\n\n".join(parts) + f"\n\n{format_cart(user.id)}",
+        parse_mode="Markdown",
+        reply_markup=kb,
+    )
+
+    for product, variants in need_size[:5]:
+        await msg.reply_text(
+            f"📐 <b>{product['name']}</b> — o‘lcham tanlang:",
+            parse_mode="HTML",
+            reply_markup=product_keyboard(
+                int(product["id"]),
+                product["category_id"],
+                variants,
+                cart_variant_qty={},
+            ),
+        )
 
 
 async def share_invite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1383,6 +1488,12 @@ async def admin_product_callback(
         status = "✅ Faol" if product["is_active"] else "🚫 Yashirin"
         category = product["category_name"] or "—"
         cat_id = product["category_id"]
+        barcode = ""
+        try:
+            barcode = product["barcode"] or ""
+        except (KeyError, IndexError):
+            barcode = ""
+        code_line = f"📷 Kod: <code>{barcode}</code>\n" if barcode else "📷 Kod: —\n"
         rows = admin_product_item_keyboard(
             product["id"], bool(product["is_active"])
         ).inline_keyboard
@@ -1408,6 +1519,7 @@ async def admin_product_callback(
             f"#{product['id']} <b>{product['name']}</b>\n"
             f"🗂 {category}\n"
             f"✨ {money_html(product['price'])} ✨\n"
+            f"{code_line}"
             f"📝 {product['description'] or '—'}\n"
             f"Holat: {status}",
             reply_markup=markup,

@@ -31,6 +31,7 @@ from bot.database import (
     get_categories,
     get_order,
     get_product,
+    get_product_by_barcode,
     get_products,
     get_variant,
     get_variants,
@@ -177,6 +178,33 @@ async def api_products(request: web.Request) -> web.Response:
             }
         )
     return web.json_response(payload)
+
+
+async def api_barcode(request: web.Request) -> web.Response:
+    code = (request.match_info.get("code") or "").strip()
+    if not code:
+        raise web.HTTPBadRequest(text="Kod bo'sh")
+    product = get_product_by_barcode(code)
+    if not product:
+        raise web.HTTPNotFound(text="Mahsulot topilmadi")
+    variants = get_variants(int(product["id"]), active_only=True)
+    return web.json_response(
+        {
+            "id": int(product["id"]),
+            "name": product["name"],
+            "price": int(product["price"]),
+            "display_price": product_display_price(product),
+            "barcode": code,
+            "variants": [
+                {
+                    "id": int(v["id"]),
+                    "name": v["name"],
+                    "price": int(v["price"]),
+                }
+                for v in variants
+            ],
+        }
+    )
 
 
 async def api_photo(request: web.Request) -> web.Response:
@@ -355,6 +383,7 @@ def create_app() -> web.Application:
     app.router.add_get("/api/config", api_config)
     app.router.add_get("/api/categories", api_categories)
     app.router.add_get("/api/products", api_products)
+    app.router.add_get("/api/barcode/{code}", api_barcode)
     app.router.add_get("/api/photo/{product_id}", api_photo)
     app.router.add_post("/api/order", api_order)
     app.router.add_route("OPTIONS", "/api/{tail:.*}", lambda r: web.Response(status=204))
