@@ -49,27 +49,8 @@ from bot.webapp import set_bot, start_webapp_server
 
 
 def _start_health_server() -> None:
-    """Render Web Service uchun PORT da oddiy health endpoint."""
-    import os
-    import threading
-    from http.server import BaseHTTPRequestHandler, HTTPServer
-
-    port_raw = os.environ.get("PORT", "").strip()
-    if not port_raw.isdigit():
-        return
-    port = int(port_raw)
-
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b"ok")
-
-        def log_message(self, format: str, *args) -> None:  # noqa: A003
-            return
-
-    server = HTTPServer(("0.0.0.0", port), Handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    """Eski Render health — endi Mini App /health orqali; PORT band bo'lmasin."""
+    return
 
 
 def _acquire_single_instance_lock() -> None:

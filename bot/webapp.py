@@ -115,6 +115,10 @@ def _row_to_dict(row) -> dict[str, Any]:
     return {key: row[key] for key in row.keys()}
 
 
+async def api_health(_request: web.Request) -> web.Response:
+    return web.Response(text="ok")
+
+
 async def api_config(_request: web.Request) -> web.Response:
     return web.json_response(
         {
@@ -380,6 +384,7 @@ async def serve_index(_request: web.Request) -> web.FileResponse:
 
 def create_app() -> web.Application:
     app = web.Application(middlewares=[cors_middleware])
+    app.router.add_get("/health", api_health)
     app.router.add_get("/api/config", api_config)
     app.router.add_get("/api/categories", api_categories)
     app.router.add_get("/api/products", api_products)

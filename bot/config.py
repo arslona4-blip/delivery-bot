@@ -51,8 +51,8 @@ SHOP_TELEGRAM = os.getenv("SHOP_TELEGRAM", "@support")
 SHOP_HOURS = os.getenv("SHOP_HOURS", "09:00 - 22:00")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "yetkazib_berish_xizmat_bot").lstrip("@")
 REFERRAL_BONUS = int(os.getenv("REFERRAL_BONUS", "1000"))
-WEBAPP_PORT = int(os.getenv("WEBAPP_PORT", "8088"))
-# Cloudflare tunnel / hosting URL, masalan https://xxxx.trycloudflare.com
+WEBAPP_PORT = int(os.getenv("PORT") or os.getenv("WEBAPP_PORT", "8088"))
+# Cloudflare tunnel / Railway HTTPS URL, masalan https://xxxx.up.railway.app
 MINIAPP_URL = os.getenv("MINIAPP_URL", "").rstrip("/")
 
 CARD_NUMBER = os.getenv("CARD_NUMBER", "").strip()
